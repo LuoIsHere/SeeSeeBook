@@ -1,3 +1,15 @@
-idf_component_register(SRCS "hello_world_main.c"
-                       PRIV_REQUIRES spi_flash
-                       INCLUDE_DIRS "")
+idf_component_register(
+    SRCS
+        "main.cpp"
+        "app/app.cpp"
+        "hal/hal.cpp"
+        "hal/hal_display.cpp"
+        "hal/hal_touch.cpp"
+    INCLUDE_DIRS
+        "."
+        "app"
+        "hal"
+    PRIV_REQUIRES
+        m5unified
+        esp_driver_gptimer
+)

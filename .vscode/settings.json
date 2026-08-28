@@ -4,7 +4,7 @@
   "idf.openOcdConfigs": [
     "board/esp32s3-builtin.cfg"
   ],
-  "idf.portWin": "detect",
+  "idf.portWin": "COM5",
   "idf.currentSetup": "D:\\Dev\\ESP\\idf_env\\v5.5.5\\.espressif\\v5.5.5\\esp-idf",
   "idf.customExtraVars": {
     "IDF_TARGET": "esp32s3"
@@ -14,5 +14,6 @@
     "--background-index",
     "--query-driver=**",
     "--compile-commands-dir=d:\\Dev\\ESP\\SeeSeeBook\\build"
-  ]
+  ],
+  "idf.flashType": "UART"
 }

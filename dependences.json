@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "modules": [
+    {
+      "name": "mooncake",
+      "git": "https://github.com/Forairaaaaa/mooncake.git",
+      "tag": "v2.3.3",
+      "submodules": false
+    }
+  ]
+}

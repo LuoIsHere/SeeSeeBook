@@ -68,6 +68,8 @@ void menu_app::handle_app_event(const app_event& event)
                 target = app_kind::rtc_setting;
             } else if (captured_entry == 2U) {
                 target = app_kind::battery;
+            } else if (captured_entry == 3U) {
+                target = app_kind::file;
             }
             ESP_LOGI(log_tag, "menu entry selected index=%u", captured_entry);
             app_request_switch(target);

@@ -4,6 +4,7 @@ idf_component_register(
         "app/app.cpp"
         "app/input_manager.cpp"
         "app/battery/battery_app.cpp"
+        "app/file/file_app.cpp"
         "app/menu/menu_app.cpp"
         "app/rtc_setting/rtc_setting_app.cpp"
         "app/test/test_app.cpp"
@@ -12,20 +13,26 @@ idf_component_register(
         "hal/hal_display.cpp"
         "hal/hal_internal_i2c.cpp"
         "hal/hal_rtc.cpp"
+        "hal/hal_storage.cpp"
         "hal/hal_touch.cpp"
+        "storage/storage_service.cpp"
         "ui/app_back_button.cpp"
         "ui/status_bar.cpp"
     INCLUDE_DIRS
         "."
         "app"
         "app/battery"
+        "app/file"
         "app/menu"
         "app/rtc_setting"
         "app/test"
         "hal"
+        "storage"
         "ui"
     PRIV_REQUIRES
         m5unified
         mooncake
         esp_driver_gptimer
+        esp_driver_sdmmc
+        fatfs
 )

@@ -8,6 +8,7 @@
 
 #include "app_base.hpp"
 #include "battery/battery_app.hpp"
+#include "file/file_app.hpp"
 #include "input_manager.hpp"
 #include "menu/menu_app.hpp"
 #include "rtc_setting/rtc_setting_app.hpp"
@@ -27,6 +28,7 @@ app_record menu_record;
 app_record test_record;
 app_record rtc_setting_record;
 app_record battery_record;
+app_record file_record;
 app_record* foreground_record = nullptr;
 app_kind foreground_kind = app_kind::menu;
 app_kind pending_target = app_kind::menu;
@@ -44,6 +46,8 @@ app_record& record_for(app_kind kind)
             return rtc_setting_record;
         case app_kind::battery:
             return battery_record;
+        case app_kind::file:
+            return file_record;
     }
     return menu_record;
 }
@@ -59,6 +63,8 @@ const char* app_kind_name(app_kind kind)
             return "rtc_setting";
         case app_kind::battery:
             return "battery";
+        case app_kind::file:
+            return "file";
     }
     return "unknown";
 }
@@ -109,8 +115,10 @@ esp_err_t app_init()
     test_record = install_app<test_app>();
     rtc_setting_record = install_app<rtc_setting_app>();
     battery_record = install_app<battery_app>();
+    file_record = install_app<file_app>();
     if (menu_record.mooncake_id < 0 || test_record.mooncake_id < 0 ||
-        rtc_setting_record.mooncake_id < 0 || battery_record.mooncake_id < 0) {
+        rtc_setting_record.mooncake_id < 0 || battery_record.mooncake_id < 0 ||
+        file_record.mooncake_id < 0) {
         ESP_LOGE(log_tag, "failed to install Mooncake apps");
         return ESP_FAIL;
     }
@@ -118,11 +126,12 @@ esp_err_t app_init()
     app_request_switch(app_kind::menu);
     ESP_LOGI(
         log_tag,
-        "Mooncake apps installed menu_id=%d test_id=%d rtc_setting_id=%d battery_id=%d",
+        "Mooncake apps installed menu_id=%d test_id=%d rtc_setting_id=%d battery_id=%d file_id=%d",
         menu_record.mooncake_id,
         test_record.mooncake_id,
         rtc_setting_record.mooncake_id,
-        battery_record.mooncake_id);
+        battery_record.mooncake_id,
+        file_record.mooncake_id);
     return ESP_OK;
 }
 

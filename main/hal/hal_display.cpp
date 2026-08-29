@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <cstring>
 
 #include <M5Unified.h>
 #include <esp_log.h>
@@ -36,6 +37,7 @@ constexpr const char* menu_entry_labels[MENU_ENTRY_COUNT] = {
     "Screen Setting",
     "RTC Setting",
     "Battery",
+    "Files",
 };
 
 QueueHandle_t request_queue = nullptr;
@@ -48,6 +50,7 @@ struct ghost_debt {
     std::uint16_t status_bar = 0;
     std::uint16_t test_content = 0;
     std::uint16_t battery_content = 0;
+    std::uint16_t file_content = 0;
     bool cleanup_pending = false;
 };
 
@@ -100,6 +103,8 @@ std::uint16_t& debt_for_region(
             return debt.test_content;
         case display_update_region::battery_content:
             return debt.battery_content;
+        case display_update_region::file_content:
+            return debt.file_content;
         case display_update_region::full:
             return debt.test_content;
     }
@@ -120,6 +125,8 @@ std::uint16_t debt_limit(display_update_region update_region)
             return TEST_CONTENT_GHOST_DEBT_LIMIT;
         case display_update_region::battery_content:
             return BATTERY_CONTENT_GHOST_DEBT_LIMIT;
+        case display_update_region::file_content:
+            return FILE_CONTENT_GHOST_DEBT_LIMIT;
         case display_update_region::full:
             return TEST_CONTENT_GHOST_DEBT_LIMIT;
     }
@@ -142,6 +149,8 @@ std::uint16_t debt_value_for_region(
             return debt.test_content;
         case display_update_region::battery_content:
             return debt.battery_content;
+        case display_update_region::file_content:
+            return debt.file_content;
         case display_update_region::full:
             return 0U;
     }
@@ -154,7 +163,8 @@ void update_cleanup_pending(ghost_debt& debt)
         debt.control >= CONTROL_GHOST_DEBT_LIMIT ||
         debt.rtc_editor >= RTC_EDITOR_GHOST_DEBT_LIMIT ||
         debt.test_content >= TEST_CONTENT_GHOST_DEBT_LIMIT ||
-        debt.battery_content >= BATTERY_CONTENT_GHOST_DEBT_LIMIT;
+        debt.battery_content >= BATTERY_CONTENT_GHOST_DEBT_LIMIT ||
+        debt.file_content >= FILE_CONTENT_GHOST_DEBT_LIMIT;
 }
 
 void record_completed_refresh(
@@ -180,12 +190,13 @@ void record_completed_refresh(
     if (!cleanup_was_pending && debt.cleanup_pending) {
         ESP_LOGI(
             log_tag,
-            "ghost cleanup pending control=%u rtc=%u status=%u test=%u battery=%u",
+            "ghost cleanup pending control=%u rtc=%u status=%u test=%u battery=%u file=%u",
             static_cast<unsigned>(debt.control),
             static_cast<unsigned>(debt.rtc_editor),
             static_cast<unsigned>(debt.status_bar),
             static_cast<unsigned>(debt.test_content),
-            static_cast<unsigned>(debt.battery_content));
+            static_cast<unsigned>(debt.battery_content),
+            static_cast<unsigned>(debt.file_content));
     }
 }
 
@@ -716,6 +727,255 @@ void draw_battery_request(const display_request& request)
     draw_battery_content(request.battery);
 }
 
+std::size_t utf8_codepoint_length(unsigned char lead)
+{
+    if ((lead & 0x80U) == 0U) {
+        return 1U;
+    }
+    if ((lead & 0xe0U) == 0xc0U) {
+        return 2U;
+    }
+    if ((lead & 0xf0U) == 0xe0U) {
+        return 3U;
+    }
+    if ((lead & 0xf8U) == 0xf0U) {
+        return 4U;
+    }
+    return 1U;
+}
+
+void truncate_utf8_right(
+    const char* text,
+    std::int32_t maximum_width,
+    char* output,
+    std::size_t output_size,
+    bool force_suffix)
+{
+    if (text == nullptr || output_size == 0U) {
+        return;
+    }
+    std::snprintf(output, output_size, "%s", text);
+    if (!force_suffix && M5.Display.textWidth(output) <= maximum_width) {
+        return;
+    }
+
+    constexpr char suffix[] = "...";
+    std::size_t input_offset = 0U;
+    std::size_t output_length = 0U;
+    output[0] = '\0';
+    while (text[input_offset] != '\0') {
+        std::size_t codepoint_length = utf8_codepoint_length(
+            static_cast<unsigned char>(text[input_offset]));
+        const std::size_t remaining = std::strlen(text + input_offset);
+        codepoint_length = std::min(codepoint_length, remaining);
+        if (output_length + codepoint_length + sizeof(suffix) > output_size) {
+            break;
+        }
+        std::memcpy(output + output_length, text + input_offset, codepoint_length);
+        output_length += codepoint_length;
+        std::memcpy(output + output_length, suffix, sizeof(suffix));
+        if (M5.Display.textWidth(output) > maximum_width) {
+            output_length -= codepoint_length;
+            break;
+        }
+        input_offset += codepoint_length;
+    }
+    std::memcpy(output + output_length, suffix, sizeof(suffix));
+}
+
+void truncate_path_left(
+    const char* path,
+    std::int32_t maximum_width,
+    char* output,
+    std::size_t output_size)
+{
+    if (path == nullptr || output_size == 0U) {
+        return;
+    }
+    std::snprintf(output, output_size, "%s", path);
+    if (M5.Display.textWidth(output) <= maximum_width) {
+        return;
+    }
+
+    constexpr char prefix[] = "/.../";
+    const std::size_t path_length = std::strlen(path);
+    std::size_t suffix_start = path_length;
+    while (suffix_start > 1U) {
+        --suffix_start;
+        while (suffix_start > 1U &&
+               (static_cast<unsigned char>(path[suffix_start]) & 0xc0U) == 0x80U) {
+            --suffix_start;
+        }
+        std::snprintf(output, output_size, "%s%s", prefix, path + suffix_start);
+        if (M5.Display.textWidth(output) > maximum_width) {
+            const std::size_t codepoint_length = utf8_codepoint_length(
+                static_cast<unsigned char>(path[suffix_start]));
+            suffix_start = std::min(path_length, suffix_start + codepoint_length);
+            break;
+        }
+    }
+    std::snprintf(output, output_size, "%s%s", prefix, path + suffix_start);
+}
+
+const char* file_status_text(file_view_status status)
+{
+    switch (status) {
+        case file_view_status::no_card:
+            return "SD card not inserted";
+        case file_view_status::mounting:
+            return "Reading SD card...";
+        case file_view_status::loading:
+            return "Loading...";
+        case file_view_status::ready:
+            return "";
+        case file_view_status::error:
+            return "SD card error - reinsert card";
+        case file_view_status::directory_error:
+            return "Directory read failed";
+        case file_view_status::directory_too_large:
+            return "Too many directory entries";
+        case file_view_status::path_too_long:
+            return "Path is too long";
+    }
+    return "Storage error";
+}
+
+void draw_file_row(
+    const file_view_state& state,
+    std::uint8_t row_index,
+    bool pressed)
+{
+    if (row_index >= FILE_VIEW_ROW_COUNT || row_index >= state.row_count) {
+        return;
+    }
+    const file_row_view_state& row = state.rows[row_index];
+    const ui_rect rect = file_row_rect(row_index);
+    const std::uint32_t background = pressed ? TFT_BLACK : TFT_WHITE;
+    // Keep disabled root ".." monochrome; PaperMono does not need gray dithering here.
+    const std::uint32_t foreground = pressed ? TFT_WHITE : TFT_BLACK;
+    M5.Display.fillRect(rect.left, rect.top, rect.width, rect.height, background);
+    M5.Display.setFont(&fonts::efontCN_24);
+    M5.Display.setTextSize(FILE_ROW_TEXT_SIZE);
+    M5.Display.setTextDatum(textdatum_t::middle_left);
+    M5.Display.setTextColor(foreground, background);
+    char display_name[FILE_VIEW_NAME_LENGTH];
+    const std::int32_t indicator_width = row.directory && !row.parent ? 28 : 0;
+    truncate_utf8_right(
+        row.name,
+        rect.width - indicator_width - 8,
+        display_name,
+        sizeof(display_name),
+        row.name_truncated);
+    M5.Display.drawString(display_name, rect.left + 4, rect.top + rect.height / 2);
+    if (row.directory && !row.parent) {
+        M5.Display.setTextDatum(textdatum_t::middle_right);
+        M5.Display.drawString(">", rect.left + rect.width - 4, rect.top + rect.height / 2);
+    }
+    M5.Display.setFont(&fonts::Font0);
+}
+
+void draw_file_page_button(bool next, bool pressed)
+{
+    const ui_rect rect = next ? file_next_page_rect() : file_previous_page_rect();
+    const std::uint32_t background = pressed ? TFT_BLACK : TFT_WHITE;
+    const std::uint32_t foreground = pressed ? TFT_WHITE : TFT_BLACK;
+    M5.Display.fillRect(rect.left, rect.top, rect.width, rect.height, background);
+    M5.Display.setFont(&fonts::Font0);
+    M5.Display.setTextSize(FILE_PAGE_BUTTON_TEXT_SIZE);
+    M5.Display.setTextDatum(textdatum_t::middle_center);
+    M5.Display.setTextColor(foreground, background);
+    M5.Display.drawString(next ? ">" : "<", rect.left + rect.width / 2, rect.top + rect.height / 2);
+}
+
+void draw_file_content(const file_view_state& state)
+{
+    M5.Display.fillRect(
+        0,
+        FILE_CONTENT_REGION_TOP,
+        M5.Display.width(),
+        FILE_CONTENT_REGION_HEIGHT,
+        TFT_WHITE);
+    M5.Display.setFont(&fonts::efontCN_24);
+    M5.Display.setTextSize(1U);
+    M5.Display.setTextColor(TFT_BLACK, TFT_WHITE);
+    M5.Display.setTextDatum(textdatum_t::middle_left);
+    char display_path[FILE_VIEW_PATH_LENGTH];
+    truncate_path_left(
+        state.path,
+        PAPER_MONO_PORTRAIT_WIDTH - FILE_PATH_LEFT * 2,
+        display_path,
+        sizeof(display_path));
+    M5.Display.drawString(display_path, FILE_PATH_LEFT, FILE_PATH_TOP + FILE_PATH_HEIGHT / 2);
+    M5.Display.drawFastHLine(
+        FILE_ROW_LEFT,
+        FILE_PATH_TOP + FILE_PATH_HEIGHT,
+        FILE_ROW_WIDTH,
+        TFT_BLACK);
+    M5.Display.setFont(&fonts::Font0);
+
+    if (state.status == file_view_status::ready) {
+        for (std::uint8_t row = 0U; row < state.row_count; ++row) {
+            draw_file_row(state, row, false);
+        }
+        draw_file_page_button(false, false);
+        draw_file_page_button(true, false);
+        char page_label[24];
+        std::snprintf(
+            page_label,
+            sizeof(page_label),
+            "Page %u/%u",
+            static_cast<unsigned>(state.page_index + 1U),
+            static_cast<unsigned>(state.page_count));
+        M5.Display.setTextSize(FILE_PAGE_LABEL_TEXT_SIZE);
+        M5.Display.setTextDatum(textdatum_t::middle_center);
+        M5.Display.setTextColor(TFT_BLACK, TFT_WHITE);
+        M5.Display.drawString(
+            page_label,
+            PAPER_MONO_PORTRAIT_WIDTH / 2,
+            FILE_PAGINATION_TOP + FILE_PAGINATION_HEIGHT / 2);
+    } else {
+        M5.Display.setTextSize(2U);
+        M5.Display.setTextDatum(textdatum_t::middle_center);
+        M5.Display.setTextColor(TFT_BLACK, TFT_WHITE);
+        M5.Display.drawString(
+            file_status_text(state.status),
+            PAPER_MONO_PORTRAIT_WIDTH / 2,
+            360);
+    }
+
+    if (state.popup_visible) {
+        M5.Display.fillRect(
+            FILE_POPUP_LEFT,
+            FILE_POPUP_TOP,
+            FILE_POPUP_WIDTH,
+            FILE_POPUP_HEIGHT,
+            TFT_WHITE);
+        M5.Display.drawRect(
+            FILE_POPUP_LEFT,
+            FILE_POPUP_TOP,
+            FILE_POPUP_WIDTH,
+            FILE_POPUP_HEIGHT,
+            TFT_BLACK);
+        M5.Display.setTextSize(FILE_POPUP_TEXT_SIZE);
+        M5.Display.setTextDatum(textdatum_t::middle_center);
+        M5.Display.setTextColor(TFT_BLACK, TFT_WHITE);
+        M5.Display.drawString(
+            "File preview not supported",
+            FILE_POPUP_LEFT + FILE_POPUP_WIDTH / 2,
+            FILE_POPUP_TOP + FILE_POPUP_HEIGHT / 2);
+    }
+}
+
+void draw_file_request(const display_request& request)
+{
+    M5.Display.fillScreen(TFT_WHITE);
+    draw_app_back_button(file_back_button_rect(), false);
+    M5.Display.setFont(&fonts::Font0);
+    M5.Display.setTextColor(TFT_BLACK, TFT_WHITE);
+    draw_centered_line("Files", FILE_TITLE_CENTER_Y, FILE_TITLE_TEXT_SIZE);
+    draw_file_content(request.file);
+}
+
 void draw_request(
     const display_request& request,
     std::uint8_t selected_button,
@@ -733,6 +993,9 @@ void draw_request(
             break;
         case display_view::battery:
             draw_battery_request(request);
+            break;
+        case display_view::file:
+            draw_file_request(request);
             break;
     }
 }
@@ -851,8 +1114,28 @@ void refresh_battery_content(
     record_completed_refresh(debt, active_mode, display_update_region::battery_content);
 }
 
+void refresh_file_content(
+    const display_request& request,
+    refresh_mode active_mode,
+    ghost_debt& debt,
+    std::uint32_t& last_refresh_tick_ms)
+{
+    M5.Display.waitDisplay();
+    apply_refresh_mode(active_mode);
+    draw_file_content(request.file);
+    M5.Display.display(
+        0,
+        FILE_CONTENT_REGION_TOP,
+        M5.Display.width(),
+        FILE_CONTENT_REGION_HEIGHT);
+    M5.Display.waitDisplay();
+    last_refresh_tick_ms = hal_get_tick_ms();
+    record_completed_refresh(debt, active_mode, display_update_region::file_content);
+}
+
 void refresh_control_region(
     const display_control_request& request,
+    const display_request& latest_request,
     refresh_mode active_mode,
     ghost_debt& debt,
     std::uint8_t selected_button,
@@ -878,6 +1161,14 @@ void refresh_control_region(
         case display_control_type::rtc_key:
             rect = rtc_key_rect(request.button_index);
             draw_rtc_key(request.button_index, request.pressed);
+            break;
+        case display_control_type::file_row:
+            rect = request.rect;
+            draw_file_row(latest_request.file, request.button_index, request.pressed);
+            break;
+        case display_control_type::file_page:
+            rect = request.rect;
+            draw_file_page_button(request.button_index == 1U, request.pressed);
             break;
     }
     M5.Display.display(rect.left, rect.top, rect.width, rect.height);
@@ -936,6 +1227,13 @@ void process_display_control_request(
     } else if (request.type == display_control_type::rtc_key &&
                request.button_index >= RTC_KEY_COUNT) {
         return;
+    } else if (request.type == display_control_type::file_row &&
+               (latest_request.view != display_view::file ||
+                request.button_index >= latest_request.file.row_count)) {
+        return;
+    } else if (request.type == display_control_type::file_page &&
+               (latest_request.view != display_view::file || request.button_index > 1U)) {
+        return;
     }
 
     const refresh_mode active_mode = request.pressed
@@ -948,6 +1246,7 @@ void process_display_control_request(
     if (active_mode == refresh_mode::quality) {
         refresh_control_region(
             request,
+            latest_request,
             refresh_mode::fastest,
             debt,
             selected_button,
@@ -965,6 +1264,7 @@ void process_display_control_request(
     }
     refresh_control_region(
         request,
+        latest_request,
         active_mode,
         debt,
         selected_button,
@@ -1067,6 +1367,8 @@ void display_task(void*)
                 has_refreshed && latest_request.view == display_view::test;
             const bool battery_page_is_current =
                 has_refreshed && latest_request.view == display_view::battery;
+            const bool file_page_is_current =
+                has_refreshed && latest_request.view == display_view::file;
             latest_request = pending_request;
             const refresh_mode active_mode = resolve_refresh_mode(
                 pending_request.mode,
@@ -1089,6 +1391,11 @@ void display_task(void*)
                 pending_request.update_region == display_update_region::battery_content &&
                 battery_page_is_current &&
                 active_mode == refresh_mode::fastest;
+            const bool partial_file_content =
+                pending_request.view == display_view::file &&
+                pending_request.update_region == display_update_region::file_content &&
+                file_page_is_current &&
+                active_mode != refresh_mode::quality;
             if (partial_rtc_editor) {
                 refresh_rtc_editor(
                     pending_request,
@@ -1103,6 +1410,12 @@ void display_task(void*)
                     last_refresh_tick_ms);
             } else if (partial_battery_content) {
                 refresh_battery_content(
+                    pending_request,
+                    active_mode,
+                    debt,
+                    last_refresh_tick_ms);
+            } else if (partial_file_content) {
+                refresh_file_content(
                     pending_request,
                     active_mode,
                     debt,

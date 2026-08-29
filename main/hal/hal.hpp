@@ -7,6 +7,7 @@
 #include "hal_battery.hpp"
 #include "hal_display.hpp"
 #include "hal_rtc.hpp"
+#include "hal_storage.hpp"
 #include "hal_touch.hpp"
 
 // Initializes M5Unified, queues, worker tasks, and the 1 ms GPTimer.

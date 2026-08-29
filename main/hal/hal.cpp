@@ -24,9 +24,11 @@ TaskHandle_t touch_task_handle = nullptr;
 TaskHandle_t display_task_handle = nullptr;
 TaskHandle_t rtc_task_handle = nullptr;
 TaskHandle_t battery_task_handle = nullptr;
+TaskHandle_t storage_task_handle = nullptr;
 gptimer_handle_t system_timer = nullptr;
 volatile std::uint32_t system_tick_ms = 0;
 std::uint32_t touch_notification_elapsed_ms = 0;
+std::uint32_t storage_notification_elapsed_ms = 0;
 
 bool IRAM_ATTR system_timer_alarm_callback(
     gptimer_handle_t,
@@ -35,12 +37,18 @@ bool IRAM_ATTR system_timer_alarm_callback(
 {
     system_tick_ms += SYSTEM_TICK_PERIOD_MS;
     touch_notification_elapsed_ms += SYSTEM_TICK_PERIOD_MS;
+    storage_notification_elapsed_ms += SYSTEM_TICK_PERIOD_MS;
 
     BaseType_t higher_priority_task_woken = pdFALSE;
     if (touch_task_handle != nullptr &&
         touch_notification_elapsed_ms >= TOUCH_SCAN_PERIOD_MS) {
         touch_notification_elapsed_ms = 0;
         vTaskNotifyGiveFromISR(touch_task_handle, &higher_priority_task_woken);
+    }
+    if (storage_task_handle != nullptr &&
+        storage_notification_elapsed_ms >= STORAGE_DETECT_PERIOD_MS) {
+        storage_notification_elapsed_ms = 0;
+        vTaskNotifyGiveFromISR(storage_task_handle, &higher_priority_task_woken);
     }
 
     return higher_priority_task_woken == pdTRUE;
@@ -128,6 +136,11 @@ esp_err_t hal_init()
         ESP_ERR_NO_MEM,
         log_tag,
         "start touch task");
+    ESP_RETURN_ON_FALSE(
+        hal_storage_start(storage_task_handle),
+        ESP_ERR_NO_MEM,
+        log_tag,
+        "start storage monitor task");
     ESP_RETURN_ON_ERROR(system_timer_init(), log_tag, "initialize system timer");
     ESP_RETURN_ON_FALSE(
         hal_rtc_start(rtc_task_handle),

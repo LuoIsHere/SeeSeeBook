@@ -10,7 +10,7 @@
 #define MENU_ENTRY_TOP 190
 #define MENU_ENTRY_HEIGHT 96
 #define MENU_ENTRY_TEXT_SIZE 3U
-#define MENU_ENTRY_COUNT 3U
+#define MENU_ENTRY_COUNT 4U
 
 #define RTC_BACK_BUTTON_LEFT 20
 #define RTC_BACK_BUTTON_TOP 20
@@ -59,6 +59,33 @@
 #define BATTERY_FIRST_ROW_CENTER_Y 190
 #define BATTERY_ROW_HEIGHT 72
 #define BATTERY_ROW_TEXT_SIZE 2U
+
+#define FILE_TITLE_CENTER_Y 48
+#define FILE_TITLE_TEXT_SIZE 3U
+#define FILE_PATH_LEFT 24
+#define FILE_PATH_TOP 88
+#define FILE_PATH_HEIGHT 56
+#define FILE_PATH_TEXT_SIZE 2U
+#define FILE_CONTENT_REGION_TOP 88
+#define FILE_CONTENT_REGION_HEIGHT (STATUS_BAR_TOP - FILE_CONTENT_REGION_TOP)
+#define FILE_LIST_TOP 152
+#define FILE_ROW_LEFT 24
+#define FILE_ROW_WIDTH (PAPER_MONO_PORTRAIT_WIDTH - FILE_ROW_LEFT * 2)
+#define FILE_ROW_HEIGHT 60
+#define FILE_ROW_COUNT 8U
+#define FILE_ROW_TEXT_SIZE 1U
+#define FILE_PAGINATION_TOP 644
+#define FILE_PAGINATION_HEIGHT 92
+#define FILE_PAGE_BUTTON_WIDTH 96
+#define FILE_PAGE_BUTTON_TEXT_SIZE 3U
+#define FILE_PAGE_LABEL_TEXT_SIZE 2U
+#define FILE_POPUP_LEFT 48
+#define FILE_POPUP_TOP 304
+#define FILE_POPUP_WIDTH 384
+#define FILE_POPUP_HEIGHT 112
+#define FILE_POPUP_TEXT_SIZE 2U
+
+static_assert(FILE_ROW_COUNT == FILE_VIEW_ROW_COUNT);
 
 // Returns true when a normalized screen coordinate is inside a half-open rectangle.
 constexpr bool ui_point_in_rect(
@@ -114,6 +141,47 @@ constexpr ui_rect battery_back_button_rect()
         RTC_BACK_BUTTON_TOP,
         APP_BACK_BUTTON_WIDTH,
         APP_BACK_BUTTON_HEIGHT,
+    };
+}
+
+constexpr ui_rect file_back_button_rect()
+{
+    return {
+        RTC_BACK_BUTTON_LEFT,
+        RTC_BACK_BUTTON_TOP,
+        APP_BACK_BUTTON_WIDTH,
+        APP_BACK_BUTTON_HEIGHT,
+    };
+}
+
+constexpr ui_rect file_row_rect(std::uint8_t index)
+{
+    return {
+        FILE_ROW_LEFT,
+        static_cast<std::int16_t>(FILE_LIST_TOP + index * FILE_ROW_HEIGHT),
+        FILE_ROW_WIDTH,
+        FILE_ROW_HEIGHT,
+    };
+}
+
+constexpr ui_rect file_previous_page_rect()
+{
+    return {
+        FILE_ROW_LEFT,
+        FILE_PAGINATION_TOP,
+        FILE_PAGE_BUTTON_WIDTH,
+        FILE_PAGINATION_HEIGHT,
+    };
+}
+
+constexpr ui_rect file_next_page_rect()
+{
+    return {
+        static_cast<std::int16_t>(
+            PAPER_MONO_PORTRAIT_WIDTH - FILE_ROW_LEFT - FILE_PAGE_BUTTON_WIDTH),
+        FILE_PAGINATION_TOP,
+        FILE_PAGE_BUTTON_WIDTH,
+        FILE_PAGINATION_HEIGHT,
     };
 }
 

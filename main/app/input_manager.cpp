@@ -82,6 +82,37 @@ void input_manager_update()
         if (app_switch_pending()) {
             return;
         }
+
+        sd_status_event storage_status = {};
+        if (hal_try_get_storage_status_event(storage_status)) {
+            app_event event = {};
+            event.type = app_event_type::storage_status;
+            event.storage_status = storage_status;
+            if (target_app != nullptr) {
+                target_app->handle_app_event(event);
+            }
+            event_dispatched = true;
+        }
+
+        if (app_switch_pending()) {
+            return;
+        }
+
+        storage_event storage_result = {};
+        if (storage_service_try_get_event(storage_result)) {
+            app_event event = {};
+            event.type = app_event_type::storage_result;
+            event.storage_result = storage_result;
+            if (target_app != nullptr) {
+                target_app->handle_app_event(event);
+            }
+            storage_service_release_event(storage_result);
+            event_dispatched = true;
+        }
+
+        if (app_switch_pending()) {
+            return;
+        }
         if (!event_dispatched) {
             return;
         }

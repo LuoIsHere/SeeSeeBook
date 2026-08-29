@@ -7,6 +7,7 @@
 #include "hal.hpp"
 #include "input_manager.hpp"
 #include "system_config.hpp"
+#include "storage_service.hpp"
 #include "types.hpp"
 
 namespace {
@@ -19,6 +20,7 @@ extern "C" void app_main()
 {
     ESP_LOGI(log_tag, "starting project=%s version=%s", PROJECT_NAME, PROJECT_VERSION);
     ESP_ERROR_CHECK(hal_init());
+    ESP_ERROR_CHECK(storage_service_init());
     ESP_ERROR_CHECK(app_init());
 
     for (;;) {

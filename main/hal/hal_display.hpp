@@ -14,6 +14,7 @@
 #define STATUS_BAR_GHOST_DEBT_LIMIT 60U
 #define TEST_CONTENT_GHOST_DEBT_LIMIT 10U
 #define BATTERY_CONTENT_GHOST_DEBT_LIMIT 10U
+#define FILE_CONTENT_GHOST_DEBT_LIMIT 10U
 
 #define PAPER_MONO_DISPLAY_ROTATION 0U
 #define PAPER_MONO_PORTRAIT_WIDTH 480U
@@ -30,7 +31,7 @@
 
 #define DISPLAY_REQUEST_QUEUE_LENGTH 2U
 #define DISPLAY_CONTROL_QUEUE_LENGTH 16U
-#define DISPLAY_TASK_STACK_SIZE 6144U
+#define DISPLAY_TASK_STACK_SIZE 12288U
 #define DISPLAY_TASK_PRIORITY 5U
 
 enum class refresh_mode : std::uint8_t {
@@ -44,6 +45,7 @@ enum class display_view : std::uint8_t {
     test,
     rtc_setting,
     battery,
+    file,
 };
 
 enum class display_update_region : std::uint8_t {
@@ -54,6 +56,7 @@ enum class display_update_region : std::uint8_t {
     status_bar,
     test_content,
     battery_content,
+    file_content,
 };
 
 struct ui_rect {
@@ -79,6 +82,41 @@ enum class display_control_type : std::uint8_t {
     menu_entry,
     app_back_button,
     rtc_key,
+    file_row,
+    file_page,
+};
+
+#define FILE_VIEW_PATH_LENGTH 96U
+#define FILE_VIEW_NAME_LENGTH 64U
+#define FILE_VIEW_ROW_COUNT 8U
+
+enum class file_view_status : std::uint8_t {
+    no_card,
+    mounting,
+    loading,
+    ready,
+    error,
+    directory_error,
+    directory_too_large,
+    path_too_long,
+};
+
+struct file_row_view_state {
+    char name[FILE_VIEW_NAME_LENGTH];
+    bool directory;
+    bool parent;
+    bool enabled;
+    bool name_truncated;
+};
+
+struct file_view_state {
+    char path[FILE_VIEW_PATH_LENGTH];
+    file_row_view_state rows[FILE_VIEW_ROW_COUNT];
+    std::uint16_t page_index;
+    std::uint16_t page_count;
+    std::uint8_t row_count;
+    file_view_status status;
+    bool popup_visible;
 };
 
 enum class rtc_edit_field : std::uint8_t {
@@ -134,6 +172,7 @@ struct display_request {
     bool allow_quality_cleanup;
     rtc_setting_view_state rtc_setting;
     battery_view_state battery;
+    file_view_state file;
 };
 
 // Control feedback uses the same mode and region contract as frame requests.

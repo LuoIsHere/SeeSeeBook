@@ -7,6 +7,7 @@
 #include <mooncake.h>
 
 #include "app_base.hpp"
+#include "battery/battery_app.hpp"
 #include "input_manager.hpp"
 #include "menu/menu_app.hpp"
 #include "rtc_setting/rtc_setting_app.hpp"
@@ -25,6 +26,7 @@ mooncake::Mooncake mooncake_runtime;
 app_record menu_record;
 app_record test_record;
 app_record rtc_setting_record;
+app_record battery_record;
 app_record* foreground_record = nullptr;
 app_kind foreground_kind = app_kind::menu;
 app_kind pending_target = app_kind::menu;
@@ -40,6 +42,8 @@ app_record& record_for(app_kind kind)
             return test_record;
         case app_kind::rtc_setting:
             return rtc_setting_record;
+        case app_kind::battery:
+            return battery_record;
     }
     return menu_record;
 }
@@ -53,6 +57,8 @@ const char* app_kind_name(app_kind kind)
             return "test";
         case app_kind::rtc_setting:
             return "rtc_setting";
+        case app_kind::battery:
+            return "battery";
     }
     return "unknown";
 }
@@ -102,8 +108,9 @@ esp_err_t app_init()
     menu_record = install_app<menu_app>();
     test_record = install_app<test_app>();
     rtc_setting_record = install_app<rtc_setting_app>();
+    battery_record = install_app<battery_app>();
     if (menu_record.mooncake_id < 0 || test_record.mooncake_id < 0 ||
-        rtc_setting_record.mooncake_id < 0) {
+        rtc_setting_record.mooncake_id < 0 || battery_record.mooncake_id < 0) {
         ESP_LOGE(log_tag, "failed to install Mooncake apps");
         return ESP_FAIL;
     }
@@ -111,10 +118,11 @@ esp_err_t app_init()
     app_request_switch(app_kind::menu);
     ESP_LOGI(
         log_tag,
-        "Mooncake apps installed menu_id=%d test_id=%d rtc_setting_id=%d",
+        "Mooncake apps installed menu_id=%d test_id=%d rtc_setting_id=%d battery_id=%d",
         menu_record.mooncake_id,
         test_record.mooncake_id,
-        rtc_setting_record.mooncake_id);
+        rtc_setting_record.mooncake_id,
+        battery_record.mooncake_id);
     return ESP_OK;
 }
 
@@ -126,8 +134,8 @@ void app_update()
 
 void app_request_switch(app_kind target)
 {
-    if (target == app_kind::rtc_setting && foreground_record != nullptr &&
-        foreground_kind != app_kind::rtc_setting) {
+    if (target != app_kind::menu && foreground_record != nullptr &&
+        foreground_kind != target) {
         return_target = foreground_kind;
     }
     pending_target = target;

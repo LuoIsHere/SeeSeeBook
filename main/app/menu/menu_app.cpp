@@ -63,9 +63,12 @@ void menu_app::handle_app_event(const app_event& event)
         submit_entry_feedback(captured_entry, false);
         active_entry_index_ = -1;
         if (released_inside) {
-            const app_kind target = captured_entry == 0U
-                                        ? app_kind::test
-                                        : app_kind::rtc_setting;
+            app_kind target = app_kind::test;
+            if (captured_entry == 1U) {
+                target = app_kind::rtc_setting;
+            } else if (captured_entry == 2U) {
+                target = app_kind::battery;
+            }
             ESP_LOGI(log_tag, "menu entry selected index=%u", captured_entry);
             app_request_switch(target);
         }

@@ -10,12 +10,10 @@
 #define MENU_ENTRY_TOP 190
 #define MENU_ENTRY_HEIGHT 96
 #define MENU_ENTRY_TEXT_SIZE 3U
-#define MENU_ENTRY_COUNT 2U
+#define MENU_ENTRY_COUNT 3U
 
 #define RTC_BACK_BUTTON_LEFT 20
 #define RTC_BACK_BUTTON_TOP 20
-#define RTC_BACK_BUTTON_WIDTH 104
-#define RTC_BACK_BUTTON_HEIGHT 48
 #define RTC_TITLE_CENTER_Y 44
 #define RTC_TITLE_TEXT_SIZE 2U
 #define RTC_DATE_FIELD_TOP 104
@@ -35,27 +33,32 @@
 #define RTC_KEY_TEXT_SIZE 3U
 #define RTC_KEY_COUNT 12U
 
-#define STATUS_BAR_TOP 776
-#define STATUS_BAR_HEIGHT 24
-#define STATUS_BAR_LEFT_MARGIN 12
-#define STATUS_BAR_TEXT_SIZE 1U
-#define STATUS_CLOCK_REGION_WIDTH 96
+#define STATUS_BAR_TOP 760
+#define STATUS_BAR_HEIGHT 40
+#define STATUS_BAR_LEFT_MARGIN 16
+#define STATUS_BAR_RIGHT_MARGIN 12
+#define STATUS_BAR_TEXT_SIZE 2U
+#define STATUS_BATTERY_PERCENT_MAX_WIDTH 52
+#define STATUS_CHARGING_ICON_WIDTH 28
 #define STATUS_BAR_IDLE_REFRESH_INTERVAL_MS 60000U
 
-#define TEST_BACK_BUTTON_LEFT 24
-#define TEST_BACK_BUTTON_TOP 720
-#define TEST_BACK_BUTTON_WIDTH 136
-#define TEST_BACK_BUTTON_HEIGHT 56
-#define TEST_BACK_BUTTON_TEXT_SIZE 2U
-#define TEST_CONTENT_REGION_TOP FRONT_LIGHT_BAR_HEIGHT
-#define TEST_CONTENT_REGION_HEIGHT (TEST_BACK_BUTTON_TOP - TEST_CONTENT_REGION_TOP)
+#define APP_BACK_BUTTON_WIDTH 104
+#define APP_BACK_BUTTON_HEIGHT 48
+#define APP_BACK_BUTTON_TEXT_SIZE 2U
+#define TEST_BACK_BUTTON_LEFT 20
+#define TEST_BACK_BUTTON_TOP 88
+#define TEST_CONTENT_REGION_TOP 152
+#define TEST_CONTENT_REGION_HEIGHT (STATUS_BAR_TOP - TEST_CONTENT_REGION_TOP)
 
-struct ui_rect {
-    std::int16_t left;
-    std::int16_t top;
-    std::int16_t width;
-    std::int16_t height;
-};
+#define BATTERY_TITLE_CENTER_Y 48
+#define BATTERY_TITLE_TEXT_SIZE 3U
+#define BATTERY_CONTENT_REGION_TOP 96
+#define BATTERY_CONTENT_REGION_HEIGHT (STATUS_BAR_TOP - BATTERY_CONTENT_REGION_TOP)
+#define BATTERY_LABEL_LEFT 48
+#define BATTERY_VALUE_RIGHT 432
+#define BATTERY_FIRST_ROW_CENTER_Y 190
+#define BATTERY_ROW_HEIGHT 72
+#define BATTERY_ROW_TEXT_SIZE 2U
 
 // Returns true when a normalized screen coordinate is inside a half-open rectangle.
 constexpr bool ui_point_in_rect(
@@ -89,18 +92,38 @@ constexpr ui_rect rtc_back_button_rect()
     return {
         RTC_BACK_BUTTON_LEFT,
         RTC_BACK_BUTTON_TOP,
-        RTC_BACK_BUTTON_WIDTH,
-        RTC_BACK_BUTTON_HEIGHT,
+        APP_BACK_BUTTON_WIDTH,
+        APP_BACK_BUTTON_HEIGHT,
     };
 }
 
-constexpr ui_rect status_clock_rect()
+constexpr ui_rect test_back_button_rect()
+{
+    return {
+        TEST_BACK_BUTTON_LEFT,
+        TEST_BACK_BUTTON_TOP,
+        APP_BACK_BUTTON_WIDTH,
+        APP_BACK_BUTTON_HEIGHT,
+    };
+}
+
+constexpr ui_rect battery_back_button_rect()
+{
+    return {
+        RTC_BACK_BUTTON_LEFT,
+        RTC_BACK_BUTTON_TOP,
+        APP_BACK_BUTTON_WIDTH,
+        APP_BACK_BUTTON_HEIGHT,
+    };
+}
+
+constexpr ui_rect status_bar_rect()
 {
     return {
         0,
-        STATUS_BAR_TOP + 1,
-        STATUS_CLOCK_REGION_WIDTH,
-        STATUS_BAR_HEIGHT - 1,
+        STATUS_BAR_TOP,
+        PAPER_MONO_PORTRAIT_WIDTH,
+        STATUS_BAR_HEIGHT,
     };
 }
 

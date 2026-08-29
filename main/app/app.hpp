@@ -8,6 +8,7 @@ enum class app_kind : std::uint8_t {
     menu,
     test,
     rtc_setting,
+    battery,
 };
 
 // Installs all Mooncake apps and selects MenuApp as the initial foreground app.

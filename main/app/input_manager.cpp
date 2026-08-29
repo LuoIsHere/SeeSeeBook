@@ -3,11 +3,25 @@
 #include "app.hpp"
 #include "app_base.hpp"
 #include "hal.hpp"
+#include "status_bar.hpp"
 #include "system_config.hpp"
 
 namespace {
 
 app_base* target_app = nullptr;
+
+void update_status_bar_time()
+{
+    rtc_datetime datetime = {};
+    const bool valid = hal_get_cached_datetime(datetime);
+    const bool changed = status_bar_update_time(
+        valid ? datetime.time.hour : 0U,
+        valid ? datetime.time.minute : 0U,
+        valid);
+    if (changed) {
+        hal_request_status_bar_refresh();
+    }
+}
 
 }  // namespace
 
@@ -18,6 +32,7 @@ void input_manager_set_target(app_base* new_target_app)
 
 void input_manager_update()
 {
+    update_status_bar_time();
     for (std::uint32_t index = 0; index < INPUT_EVENTS_PER_UPDATE; ++index) {
         bool event_dispatched = false;
         touch_event touch = {};
@@ -40,6 +55,24 @@ void input_manager_update()
             app_event event = {};
             event.type = app_event_type::rtc;
             event.rtc = rtc;
+            if (target_app != nullptr) {
+                target_app->handle_app_event(event);
+            }
+            event_dispatched = true;
+        }
+
+        if (app_switch_pending()) {
+            return;
+        }
+
+        battery_event battery = {};
+        if (hal_try_get_battery_event(battery)) {
+            if (status_bar_update_battery(battery.snapshot)) {
+                hal_request_status_bar_refresh();
+            }
+            app_event event = {};
+            event.type = app_event_type::battery;
+            event.battery = battery;
             if (target_app != nullptr) {
                 target_app->handle_app_event(event);
             }

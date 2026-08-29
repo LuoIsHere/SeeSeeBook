@@ -2,6 +2,7 @@
 
 #include <cstdint>
 
+#include "app_back_button.hpp"
 #include "app_base.hpp"
 #include "hal_display.hpp"
 #include "hal_rtc.hpp"
@@ -19,7 +20,6 @@ protected:
 private:
     enum class captured_control : std::uint8_t {
         none,
-        back_button,
         keypad,
         field,
     };
@@ -38,6 +38,7 @@ private:
         bool field_input_started = false;
     };
 
+    app_back_button back_button_;
     rtc_setting_state state_;
     rtc_setting_view_state last_submitted_view_ = {};
     captured_control captured_control_ = captured_control::none;

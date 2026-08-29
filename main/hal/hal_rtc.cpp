@@ -125,7 +125,6 @@ void update_cache(const rtc_datetime& datetime)
     ++cache_generation;
     cache_valid = true;
     portEXIT_CRITICAL(&cache_mutex);
-    hal_request_status_bar_refresh();
 }
 
 bool read_hardware_datetime(rtc_datetime& datetime)

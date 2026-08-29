@@ -7,10 +7,13 @@
 #include <freertos/queue.h>
 #include <freertos/task.h>
 
+#include "hal_battery.hpp"
+
 #define CONTROL_GHOST_DEBT_LIMIT 20U
 #define RTC_EDITOR_GHOST_DEBT_LIMIT 12U
-#define STATUS_CLOCK_GHOST_DEBT_LIMIT 60U
+#define STATUS_BAR_GHOST_DEBT_LIMIT 60U
 #define TEST_CONTENT_GHOST_DEBT_LIMIT 10U
+#define BATTERY_CONTENT_GHOST_DEBT_LIMIT 10U
 
 #define PAPER_MONO_DISPLAY_ROTATION 0U
 #define PAPER_MONO_PORTRAIT_WIDTH 480U
@@ -40,6 +43,7 @@ enum class display_view : std::uint8_t {
     menu,
     test,
     rtc_setting,
+    battery,
 };
 
 enum class display_update_region : std::uint8_t {
@@ -47,8 +51,16 @@ enum class display_update_region : std::uint8_t {
     control,
     rtc_editor,
     rtc_editor_and_key,
-    status_clock,
+    status_bar,
     test_content,
+    battery_content,
+};
+
+struct ui_rect {
+    std::int16_t left;
+    std::int16_t top;
+    std::int16_t width;
+    std::int16_t height;
 };
 
 enum class ui_text_state : std::uint8_t {
@@ -65,8 +77,7 @@ enum class touch_display_type : std::uint8_t {
 enum class display_control_type : std::uint8_t {
     front_light,
     menu_entry,
-    back_button,
-    rtc_back_button,
+    app_back_button,
     rtc_key,
 };
 
@@ -100,6 +111,11 @@ struct rtc_setting_view_state {
     bool rtc_available;
 };
 
+struct battery_view_state {
+    battery_snapshot snapshot;
+    bool loading;
+};
+
 // Apps provide both the desired waveform and semantic dirty region.
 struct display_request {
     display_view view;
@@ -117,6 +133,7 @@ struct display_request {
     std::uint16_t released_key_mask;
     bool allow_quality_cleanup;
     rtc_setting_view_state rtc_setting;
+    battery_view_state battery;
 };
 
 // Control feedback uses the same mode and region contract as frame requests.
@@ -125,6 +142,7 @@ struct display_control_request {
     refresh_mode mode;
     display_update_region update_region;
     std::uint8_t button_index;
+    ui_rect rect;
     bool pressed;
     bool apply_level;
     bool allow_quality_cleanup;
@@ -145,5 +163,5 @@ bool hal_submit_display_request(const display_request& request);
 // Queues a visual control transition without blocking the Mooncake scheduler.
 bool hal_submit_display_control_request(const display_control_request& request);
 
-// Wakes the display worker so a changed global clock can refresh the status bar.
+// Wakes the display worker so changed system status can refresh the status bar.
 void hal_request_status_bar_refresh();

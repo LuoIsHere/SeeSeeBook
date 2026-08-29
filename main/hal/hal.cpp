@@ -23,6 +23,7 @@ QueueHandle_t display_control_queue = nullptr;
 TaskHandle_t touch_task_handle = nullptr;
 TaskHandle_t display_task_handle = nullptr;
 TaskHandle_t rtc_task_handle = nullptr;
+TaskHandle_t battery_task_handle = nullptr;
 SemaphoreHandle_t internal_i2c_mutex = nullptr;
 gptimer_handle_t system_timer = nullptr;
 volatile std::uint32_t system_tick_ms = 0;
@@ -124,6 +125,11 @@ esp_err_t hal_init()
         ESP_ERR_NO_MEM,
         log_tag,
         "start RTC task");
+    ESP_RETURN_ON_FALSE(
+        hal_battery_start(internal_i2c_mutex, battery_task_handle),
+        ESP_ERR_NO_MEM,
+        log_tag,
+        "start battery task");
     ESP_RETURN_ON_FALSE(
         hal_touch_start(touch_event_queue, touch_task_handle),
         ESP_ERR_NO_MEM,

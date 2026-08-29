@@ -27,20 +27,10 @@ bool get_front_light_button_index(
     return button_index < FRONT_LIGHT_LEVEL_COUNT;
 }
 
-bool point_in_back_button(std::int16_t x, std::int16_t y)
-{
-    return ui_point_in_rect(
-        x,
-        y,
-        TEST_BACK_BUTTON_LEFT,
-        TEST_BACK_BUTTON_TOP,
-        TEST_BACK_BUTTON_WIDTH,
-        TEST_BACK_BUTTON_HEIGHT);
-}
-
 }  // namespace
 
 test_app::test_app()
+    : back_button_({test_back_button_rect()})
 {
     // setAppInfo is part of Mooncake's external API.
     setAppInfo().name = "TestApp";
@@ -53,7 +43,13 @@ void test_app::handle_app_event(const app_event& event)
     }
 
     const touch_event& touch = event.touch;
-    if (handle_back_button_event(touch) || handle_front_light_event(touch)) {
+    const app_back_button_result back_result = back_button_.handle_touch(touch);
+    if (back_result == app_back_button_result::clicked) {
+        ESP_LOGI(log_tag, "back button selected");
+        app_request_back();
+        return;
+    }
+    if (back_result == app_back_button_result::handled || handle_front_light_event(touch)) {
         return;
     }
 
@@ -84,7 +80,7 @@ void test_app::handle_app_event(const app_event& event)
 void test_app::on_open()
 {
     front_light_button_active_ = false;
-    back_button_active_ = false;
+    back_button_.reset();
     submit_initial_frame();
     ESP_LOGI(log_tag, "TestApp opened");
 }
@@ -147,39 +143,6 @@ void test_app::submit_control_feedback(
     if (!hal_submit_display_control_request(request)) {
         ESP_LOGW(log_tag, "display control queue unavailable type=%u", static_cast<unsigned>(type));
     }
-}
-
-bool test_app::handle_back_button_event(const touch_event& event)
-{
-    if (event.type == touch_event_type::press) {
-        if (!point_in_back_button(event.start_x, event.start_y)) {
-            return false;
-        }
-        back_button_active_ = true;
-        submit_control_feedback(display_control_type::back_button, 0, true, false);
-        return true;
-    }
-
-    if (!back_button_active_) {
-        return false;
-    }
-
-    if (event.type == touch_event_type::click) {
-        const bool released_inside = point_in_back_button(event.end_x, event.end_y);
-        submit_control_feedback(display_control_type::back_button, 0, false, false);
-        back_button_active_ = false;
-        if (released_inside) {
-            ESP_LOGI(log_tag, "back button selected");
-            app_request_switch(app_kind::menu);
-        }
-        return true;
-    }
-
-    if (event.type == touch_event_type::long_press_end) {
-        submit_control_feedback(display_control_type::back_button, 0, false, false);
-        back_button_active_ = false;
-    }
-    return true;
 }
 
 bool test_app::handle_front_light_event(const touch_event& event)

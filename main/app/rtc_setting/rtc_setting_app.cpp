@@ -179,6 +179,7 @@ bool rtc_view_states_equal(
 }  // namespace
 
 rtc_setting_app::rtc_setting_app()
+    : back_button_({rtc_back_button_rect()})
 {
     // setAppInfo is part of Mooncake's external API.
     setAppInfo().name = "RTCSettingApp";
@@ -236,6 +237,7 @@ void rtc_setting_app::reset_session()
     captured_field_ = rtc_edit_field::none;
     last_submitted_view_ = {};
     has_last_submitted_view_ = false;
+    back_button_.reset();
 }
 
 void rtc_setting_app::submit_frame(
@@ -291,13 +293,19 @@ void rtc_setting_app::submit_control_feedback(
 
 void rtc_setting_app::handle_touch_event(const touch_event& event)
 {
-    if (event.type == touch_event_type::press) {
-        if (state_.saving) {
+    if (!state_.saving) {
+        const app_back_button_result back_result = back_button_.handle_touch(event);
+        if (back_result == app_back_button_result::clicked) {
+            app_request_back();
             return;
         }
-        if (ui_point_in_rect(event.start_x, event.start_y, rtc_back_button_rect())) {
-            captured_control_ = captured_control::back_button;
-            submit_control_feedback(display_control_type::rtc_back_button, 0U, true);
+        if (back_result == app_back_button_result::handled) {
+            return;
+        }
+    }
+
+    if (event.type == touch_event_type::press) {
+        if (state_.saving) {
             return;
         }
         if (state_.loading || !state_.rtc_available) {
@@ -326,17 +334,6 @@ void rtc_setting_app::handle_touch_event(const touch_event& event)
     }
 
     if (event.type == touch_event_type::click) {
-        if (captured_control_ == captured_control::back_button) {
-            submit_control_feedback(display_control_type::rtc_back_button, 0U, false);
-            const bool released_inside =
-                ui_point_in_rect(event.end_x, event.end_y, rtc_back_button_rect());
-            captured_control_ = captured_control::none;
-            if (released_inside) {
-                app_request_back();
-            }
-            return;
-        }
-
         if (captured_control_ == captured_control::keypad) {
             const std::uint8_t captured_key = static_cast<std::uint8_t>(captured_index_);
             std::uint8_t released_key = 0;
@@ -372,9 +369,7 @@ void rtc_setting_app::handle_touch_event(const touch_event& event)
     }
 
     if (event.type == touch_event_type::long_press_end) {
-        if (captured_control_ == captured_control::back_button) {
-            submit_control_feedback(display_control_type::rtc_back_button, 0U, false);
-        } else if (captured_control_ == captured_control::keypad) {
+        if (captured_control_ == captured_control::keypad) {
             submit_control_feedback(
                 display_control_type::rtc_key,
                 static_cast<std::uint8_t>(captured_index_),

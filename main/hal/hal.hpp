@@ -4,6 +4,7 @@
 
 #include "esp_err.h"
 
+#include "hal_battery.hpp"
 #include "hal_display.hpp"
 #include "hal_rtc.hpp"
 #include "hal_touch.hpp"

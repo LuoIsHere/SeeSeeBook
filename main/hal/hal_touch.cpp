@@ -1,4 +1,4 @@
-#include "hal.h"
+#include "hal.hpp"
 
 #include <M5Unified.h>
 #include <esp_log.h>
@@ -6,9 +6,15 @@
 #include <freertos/queue.h>
 #include <freertos/task.h>
 
+#include "system_config.hpp"
+
 namespace {
 
 constexpr char log_tag[] = "hal_touch";
+
+static_assert(TOUCH_DEBOUNCE_TIME_MS % TOUCH_SCAN_PERIOD_MS == 0U);
+static_assert(TOUCH_LONG_PRESS_TIME_MS % TOUCH_SCAN_PERIOD_MS == 0U);
+static_assert(LONG_PRESS_REFRESH_INTERVAL_MS % TOUCH_SCAN_PERIOD_MS == 0U);
 
 enum class touch_state : std::uint8_t {
     idle,

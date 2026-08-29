@@ -1,4 +1,4 @@
-#include "hal.h"
+#include "hal.hpp"
 
 #include <M5Unified.h>
 #include <driver/gptimer.h>
@@ -10,11 +10,8 @@
 #include <freertos/semphr.h>
 #include <freertos/task.h>
 
-bool hal_touch_start(QueueHandle_t event_queue, TaskHandle_t& task_handle);
-bool hal_display_start(
-    QueueHandle_t request_queue,
-    QueueHandle_t front_light_queue,
-    TaskHandle_t& task_handle);
+#include "system_config.hpp"
+#include "types.hpp"
 
 namespace {
 
@@ -22,12 +19,13 @@ constexpr char log_tag[] = "hal_core";
 
 QueueHandle_t touch_event_queue = nullptr;
 QueueHandle_t display_request_queue = nullptr;
-QueueHandle_t front_light_request_queue = nullptr;
+QueueHandle_t display_control_queue = nullptr;
 TaskHandle_t touch_task_handle = nullptr;
 TaskHandle_t display_task_handle = nullptr;
 SemaphoreHandle_t internal_i2c_mutex = nullptr;
 gptimer_handle_t system_timer = nullptr;
 volatile std::uint32_t system_tick_ms = 0;
+std::uint32_t touch_notification_elapsed_ms = 0;
 
 bool IRAM_ATTR system_timer_alarm_callback(
     gptimer_handle_t,
@@ -35,9 +33,12 @@ bool IRAM_ATTR system_timer_alarm_callback(
     void*)
 {
     system_tick_ms += SYSTEM_TICK_PERIOD_MS;
+    touch_notification_elapsed_ms += SYSTEM_TICK_PERIOD_MS;
 
     BaseType_t higher_priority_task_woken = pdFALSE;
-    if (touch_task_handle != nullptr) {
+    if (touch_task_handle != nullptr &&
+        touch_notification_elapsed_ms >= TOUCH_SCAN_PERIOD_MS) {
+        touch_notification_elapsed_ms = 0;
         vTaskNotifyGiveFromISR(touch_task_handle, &higher_priority_task_woken);
     }
 
@@ -76,12 +77,12 @@ esp_err_t hal_init()
 {
     touch_event_queue = xQueueCreate(TOUCH_EVENT_QUEUE_LENGTH, sizeof(touch_event));
     display_request_queue = xQueueCreate(DISPLAY_REQUEST_QUEUE_LENGTH, sizeof(display_request));
-    front_light_request_queue =
-        xQueueCreate(FRONT_LIGHT_REQUEST_QUEUE_LENGTH, sizeof(front_light_request));
+    display_control_queue =
+        xQueueCreate(DISPLAY_CONTROL_QUEUE_LENGTH, sizeof(display_control_request));
     internal_i2c_mutex = xSemaphoreCreateMutex();
     ESP_RETURN_ON_FALSE(
         touch_event_queue != nullptr && display_request_queue != nullptr &&
-            front_light_request_queue != nullptr && internal_i2c_mutex != nullptr,
+            display_control_queue != nullptr && internal_i2c_mutex != nullptr,
         ESP_ERR_NO_MEM,
         log_tag,
         "create HAL synchronization objects");
@@ -112,7 +113,7 @@ esp_err_t hal_init()
     ESP_RETURN_ON_FALSE(
         hal_display_start(
             display_request_queue,
-            front_light_request_queue,
+            display_control_queue,
             display_task_handle),
         ESP_ERR_NO_MEM,
         log_tag,
@@ -136,9 +137,10 @@ esp_err_t hal_init()
     return ESP_OK;
 }
 
-bool hal_wait_touch_event(touch_event& event)
+bool hal_try_get_touch_event(touch_event& event)
 {
-    return xQueueReceive(touch_event_queue, &event, portMAX_DELAY) == pdTRUE;
+    return touch_event_queue != nullptr &&
+           xQueueReceive(touch_event_queue, &event, 0) == pdTRUE;
 }
 
 bool hal_submit_display_request(const display_request& request)
@@ -153,15 +155,20 @@ bool hal_submit_display_request(const display_request& request)
     return submitted;
 }
 
-bool hal_submit_front_light_request(const front_light_request& request)
+bool hal_submit_display_control_request(const display_control_request& request)
 {
-    if (front_light_request_queue == nullptr) {
+    if (display_control_queue == nullptr) {
         return false;
     }
 
-    // Preserve press/release order even when the EPD task is temporarily busy.
-    const bool submitted =
-        xQueueSend(front_light_request_queue, &request, portMAX_DELAY) == pdTRUE;
+    bool submitted = xQueueSend(display_control_queue, &request, 0) == pdTRUE;
+    if (!submitted) {
+        // Prefer the newest transition so a released button cannot remain inverted.
+        display_control_request discarded_request = {};
+        xQueueReceive(display_control_queue, &discarded_request, 0);
+        submitted = xQueueSend(display_control_queue, &request, 0) == pdTRUE;
+        ESP_LOGW(log_tag, "display control queue full; oldest request discarded");
+    }
     if (submitted && display_task_handle != nullptr) {
         xTaskNotifyGive(display_task_handle);
     }

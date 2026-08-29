@@ -2,14 +2,20 @@ idf_component_register(
     SRCS
         "main.cpp"
         "app/app.cpp"
+        "app/input_manager.cpp"
+        "app/menu/menu_app.cpp"
+        "app/test/test_app.cpp"
         "hal/hal.cpp"
         "hal/hal_display.cpp"
         "hal/hal_touch.cpp"
     INCLUDE_DIRS
         "."
         "app"
+        "app/menu"
+        "app/test"
         "hal"
     PRIV_REQUIRES
         m5unified
+        mooncake
         esp_driver_gptimer
 )

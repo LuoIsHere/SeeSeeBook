@@ -1,4 +1,4 @@
-#include "hal.h"
+#include "hal.hpp"
 
 #include <cstdio>
 
@@ -7,6 +7,9 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>
 #include <freertos/task.h>
+
+#include "types.hpp"
+#include "ui_config.hpp"
 
 namespace {
 
@@ -28,7 +31,7 @@ constexpr const char* front_light_labels[FRONT_LIGHT_LEVEL_COUNT] = {
 };
 
 QueueHandle_t request_queue = nullptr;
-QueueHandle_t front_light_queue = nullptr;
+QueueHandle_t control_queue = nullptr;
 
 struct refresh_policy {
     std::uint8_t fastest_count = 0;
@@ -142,7 +145,55 @@ void draw_front_light_bar(
     }
 }
 
-void draw_request(
+void draw_menu_entry(bool pressed)
+{
+    const std::int32_t left = MENU_SCREEN_EDGE_MARGIN;
+    const std::int32_t width = M5.Display.width() - MENU_SCREEN_EDGE_MARGIN * 2;
+    M5.Display.fillRect(left, MENU_ENTRY_TOP, width, MENU_ENTRY_HEIGHT, pressed ? TFT_BLACK : TFT_WHITE);
+    M5.Display.drawFastHLine(left, MENU_ENTRY_TOP, width, TFT_BLACK);
+    M5.Display.drawFastHLine(left, MENU_ENTRY_TOP + MENU_ENTRY_HEIGHT - 1, width, TFT_BLACK);
+    M5.Display.setTextDatum(textdatum_t::middle_center);
+    M5.Display.setTextSize(MENU_ENTRY_TEXT_SIZE);
+    M5.Display.setTextColor(pressed ? TFT_WHITE : TFT_BLACK, pressed ? TFT_BLACK : TFT_WHITE);
+    M5.Display.drawString(
+        "Test",
+        M5.Display.width() / 2,
+        MENU_ENTRY_TOP + MENU_ENTRY_HEIGHT / 2);
+}
+
+void draw_back_button(bool pressed)
+{
+    M5.Display.fillRect(
+        TEST_BACK_BUTTON_LEFT,
+        TEST_BACK_BUTTON_TOP,
+        TEST_BACK_BUTTON_WIDTH,
+        TEST_BACK_BUTTON_HEIGHT,
+        pressed ? TFT_BLACK : TFT_WHITE);
+    M5.Display.drawRect(
+        TEST_BACK_BUTTON_LEFT,
+        TEST_BACK_BUTTON_TOP,
+        TEST_BACK_BUTTON_WIDTH,
+        TEST_BACK_BUTTON_HEIGHT,
+        TFT_BLACK);
+    M5.Display.setTextDatum(textdatum_t::middle_center);
+    M5.Display.setTextSize(TEST_BACK_BUTTON_TEXT_SIZE);
+    M5.Display.setTextColor(pressed ? TFT_WHITE : TFT_BLACK, pressed ? TFT_BLACK : TFT_WHITE);
+    M5.Display.drawString(
+        "< Back",
+        TEST_BACK_BUTTON_LEFT + TEST_BACK_BUTTON_WIDTH / 2,
+        TEST_BACK_BUTTON_TOP + TEST_BACK_BUTTON_HEIGHT / 2);
+}
+
+void draw_menu_request()
+{
+    M5.Display.fillScreen(TFT_WHITE);
+    M5.Display.setTextDatum(textdatum_t::middle_center);
+    M5.Display.setTextColor(TFT_BLACK, TFT_WHITE);
+    draw_centered_line(PROJECT_NAME, MENU_TITLE_CENTER_Y, MENU_TITLE_TEXT_SIZE);
+    draw_menu_entry(false);
+}
+
+void draw_test_request(
     const display_request& request,
     std::uint8_t selected_button,
     std::int16_t pressed_button)
@@ -152,6 +203,7 @@ void draw_request(
 
     M5.Display.fillScreen(TFT_WHITE);
     draw_front_light_bar(selected_button, pressed_button);
+    draw_back_button(false);
     M5.Display.setTextColor(TFT_BLACK, TFT_WHITE);
     M5.Display.setTextDatum(textdatum_t::middle_center);
     draw_centered_line(main_text(request.text_state), height / 2, 4);
@@ -197,103 +249,125 @@ void draw_request(
     }
 }
 
+void draw_request(
+    const display_request& request,
+    std::uint8_t selected_button,
+    std::int16_t pressed_button)
+{
+    if (request.view == display_view::menu) {
+        draw_menu_request();
+        return;
+    }
+    draw_test_request(request, selected_button, pressed_button);
+}
+
 void refresh_full_screen(
     const display_request& request,
     refresh_mode active_mode,
     refresh_policy& policy,
     std::uint8_t selected_button,
     std::int16_t pressed_button,
-    bool count_refresh,
     std::uint32_t& last_refresh_tick_ms)
 {
     M5.Display.waitDisplay();
     apply_refresh_mode(active_mode);
     ESP_LOGI(
         log_tag,
-        "full refresh start mode=%s fastest_count=%u fast_count=%u touch_type=%u",
+        "full refresh start mode=%s fastest_count=%u fast_count=%u view=%u",
         refresh_mode_name(active_mode),
         static_cast<unsigned>(policy.fastest_count),
         static_cast<unsigned>(policy.fast_count),
-        static_cast<unsigned>(request.touch_type));
+        static_cast<unsigned>(request.view));
     draw_request(request, selected_button, pressed_button);
     M5.Display.display();
     M5.Display.waitDisplay();
     last_refresh_tick_ms = hal_get_tick_ms();
-
-    if (count_refresh) {
-        record_completed_refresh(policy, active_mode);
-    }
+    record_completed_refresh(policy, active_mode);
     ESP_LOGI(log_tag, "full refresh complete mode=%s", refresh_mode_name(active_mode));
 }
 
-void refresh_front_light_bar(
+void refresh_control_region(
+    const display_control_request& request,
     refresh_mode active_mode,
     refresh_policy& policy,
     std::uint8_t selected_button,
     std::int16_t pressed_button,
     std::uint32_t& last_refresh_tick_ms)
 {
+    std::int32_t left = 0;
+    std::int32_t top = 0;
+    std::int32_t width = M5.Display.width();
+    std::int32_t height = FRONT_LIGHT_BAR_HEIGHT;
+
     M5.Display.waitDisplay();
     apply_refresh_mode(active_mode);
-    ESP_LOGI(
-        log_tag,
-        "partial refresh start mode=%s fastest_count=%u fast_count=%u selected=%u pressed=%d",
-        refresh_mode_name(active_mode),
-        static_cast<unsigned>(policy.fastest_count),
-        static_cast<unsigned>(policy.fast_count),
-        static_cast<unsigned>(selected_button),
-        pressed_button);
-    draw_front_light_bar(selected_button, pressed_button);
-    M5.Display.display(0, 0, M5.Display.width(), FRONT_LIGHT_BAR_HEIGHT);
+    switch (request.type) {
+        case display_control_type::front_light:
+            draw_front_light_bar(selected_button, pressed_button);
+            break;
+        case display_control_type::menu_entry:
+            left = MENU_SCREEN_EDGE_MARGIN;
+            top = MENU_ENTRY_TOP;
+            width = M5.Display.width() - MENU_SCREEN_EDGE_MARGIN * 2;
+            height = MENU_ENTRY_HEIGHT;
+            draw_menu_entry(request.pressed);
+            break;
+        case display_control_type::back_button:
+            left = TEST_BACK_BUTTON_LEFT;
+            top = TEST_BACK_BUTTON_TOP;
+            width = TEST_BACK_BUTTON_WIDTH;
+            height = TEST_BACK_BUTTON_HEIGHT;
+            draw_back_button(request.pressed);
+            break;
+    }
+    M5.Display.display(left, top, width, height);
     M5.Display.waitDisplay();
     last_refresh_tick_ms = hal_get_tick_ms();
     record_completed_refresh(policy, active_mode);
-    ESP_LOGI(log_tag, "partial refresh complete mode=%s", refresh_mode_name(active_mode));
+    ESP_LOGI(
+        log_tag,
+        "control refresh complete type=%u mode=%s pressed=%u",
+        static_cast<unsigned>(request.type),
+        refresh_mode_name(active_mode),
+        request.pressed ? 1U : 0U);
 }
 
-void process_front_light_request(
-    const front_light_request& request,
+void process_display_control_request(
+    const display_control_request& request,
     const display_request& latest_request,
     refresh_policy& policy,
     std::uint8_t& selected_button,
     std::int16_t& pressed_button,
     std::uint32_t& last_refresh_tick_ms)
 {
-    if (request.button_index >= FRONT_LIGHT_LEVEL_COUNT) {
-        ESP_LOGW(
-            log_tag,
-            "invalid front light button index=%u",
-            static_cast<unsigned>(request.button_index));
-        return;
+    if (request.type == display_control_type::front_light) {
+        if (request.button_index >= FRONT_LIGHT_LEVEL_COUNT) {
+            ESP_LOGW(
+                log_tag,
+                "invalid front light button index=%u",
+                static_cast<unsigned>(request.button_index));
+            return;
+        }
+
+        pressed_button = request.pressed ? request.button_index : no_pressed_button;
+        if (!request.pressed && request.apply_level) {
+            selected_button = request.button_index;
+            hal_set_front_light(front_light_values[selected_button]);
+            ESP_LOGI(
+                log_tag,
+                "front light applied index=%u brightness=%u",
+                static_cast<unsigned>(selected_button),
+                static_cast<unsigned>(front_light_values[selected_button]));
+        }
     }
 
-    if (request.pressed) {
-        pressed_button = request.button_index;
-        // Press feedback prioritizes latency and always uses a partial Fastest refresh.
-        refresh_front_light_bar(
-            refresh_mode::fastest,
-            policy,
-            selected_button,
-            pressed_button,
-            last_refresh_tick_ms);
-        return;
-    }
-
-    pressed_button = no_pressed_button;
-    if (request.apply_level) {
-        selected_button = request.button_index;
-        hal_set_front_light(front_light_values[selected_button]);
-        ESP_LOGI(
-            log_tag,
-            "front light applied index=%u brightness=%u",
-            static_cast<unsigned>(selected_button),
-            static_cast<unsigned>(front_light_values[selected_button]));
-    }
-
-    const refresh_mode release_mode = select_refresh_mode(policy);
-    if (release_mode == refresh_mode::quality) {
-        // Restore the button immediately, then clean accumulated EPD ghosting globally.
-        refresh_front_light_bar(
+    const refresh_mode active_mode = request.pressed
+                                         ? refresh_mode::fastest
+                                         : select_refresh_mode(policy);
+    if (active_mode == refresh_mode::quality) {
+        // Restore the control quickly, then clean accumulated ghosting globally.
+        refresh_control_region(
+            request,
             refresh_mode::fastest,
             policy,
             selected_button,
@@ -305,13 +379,13 @@ void process_front_light_request(
             policy,
             selected_button,
             pressed_button,
-            true,
             last_refresh_tick_ms);
         return;
     }
 
-    refresh_front_light_bar(
-        release_mode,
+    refresh_control_region(
+        request,
+        active_mode,
         policy,
         selected_button,
         pressed_button,
@@ -323,7 +397,7 @@ bool display_request_is_due(
     std::uint32_t last_refresh_tick_ms,
     bool has_refreshed)
 {
-    return !has_refreshed || request.minimum_refresh_interval_ms == 0 ||
+    return !has_refreshed || request.minimum_refresh_interval_ms == 0U ||
            hal_get_tick_ms() - last_refresh_tick_ms >= request.minimum_refresh_interval_ms;
 }
 
@@ -351,7 +425,7 @@ void display_task(void*)
     bool has_pending_request = false;
     bool has_refreshed = false;
 
-    latest_request.text_state = ui_text_state::hi_xi;
+    latest_request.view = display_view::menu;
     latest_request.touch_type = touch_display_type::none;
 
     for (;;) {
@@ -363,10 +437,10 @@ void display_task(void*)
                                           : portMAX_DELAY;
         ulTaskNotifyTake(pdTRUE, wait_ticks);
 
-        front_light_request light_request = {};
-        while (xQueueReceive(front_light_queue, &light_request, 0) == pdTRUE) {
-            process_front_light_request(
-                light_request,
+        display_control_request control_request = {};
+        while (xQueueReceive(control_queue, &control_request, 0) == pdTRUE) {
+            process_display_control_request(
+                control_request,
                 latest_request,
                 policy,
                 selected_button,
@@ -396,7 +470,6 @@ void display_task(void*)
             policy,
             selected_button,
             pressed_button,
-            !pending_request.force_quality,
             last_refresh_tick_ms);
         has_pending_request = false;
         has_refreshed = true;
@@ -407,11 +480,11 @@ void display_task(void*)
 
 bool hal_display_start(
     QueueHandle_t target_request_queue,
-    QueueHandle_t target_front_light_queue,
+    QueueHandle_t target_control_queue,
     TaskHandle_t& task_handle)
 {
     request_queue = target_request_queue;
-    front_light_queue = target_front_light_queue;
+    control_queue = target_control_queue;
     const bool started = xTaskCreate(
                              display_task,
                              "display_task",

@@ -1,174 +1,107 @@
-#include "app.h"
+#include "app.hpp"
+
+#include <memory>
 
 #include <esp_log.h>
 
-#include "hal.h"
-#include "types.hpp"
+#include <mooncake.h>
+
+#include "app_base.hpp"
+#include "input_manager.hpp"
+#include "menu/menu_app.hpp"
+#include "test/test_app.hpp"
 
 namespace {
 
-constexpr char log_tag[] = "app";
+constexpr char log_tag[] = "app_runtime";
 
-struct app_state {
-    ui_text_state text_state = ui_text_state::hi_xi;
-    std::uint8_t front_light_level_index = FRONT_LIGHT_DEFAULT_LEVEL_INDEX;
-    std::uint8_t pressed_front_light_button = 0;
-    bool front_light_button_active = false;
+struct app_record {
+    int mooncake_id = -1;
+    app_base* instance = nullptr;
 };
 
-app_state state;
+mooncake::Mooncake mooncake_runtime;
+app_record menu_record;
+app_record test_record;
+app_record* foreground_record = nullptr;
+app_kind pending_target = app_kind::menu;
+bool has_pending_switch = false;
 
-void submit_touch_frame(const touch_event& event, touch_display_type touch_type)
+app_record& record_for(app_kind kind)
 {
-    display_request request = {};
-    request.text_state = state.text_state;
-    request.touch_type = touch_type;
-    request.start_x = event.start_x;
-    request.start_y = event.start_y;
-    request.end_x = event.end_x;
-    request.end_y = event.end_y;
-    request.duration_ms = event.duration_ms;
-    request.timestamp_ms = event.timestamp_ms;
-    request.minimum_refresh_interval_ms =
-        touch_type == touch_display_type::long_press ? LONG_PRESS_REFRESH_INTERVAL_MS : 0;
-
-    if (!hal_submit_display_request(request)) {
-        ESP_LOGW(log_tag, "display request queue unavailable");
-    }
+    return kind == app_kind::menu ? menu_record : test_record;
 }
 
-bool get_front_light_button_index(
-    std::int16_t x,
-    std::int16_t y,
-    std::uint8_t& button_index)
+void apply_pending_switch()
 {
-    if (x < 0 || y < 0 ||
-        x >= static_cast<std::int16_t>(PAPER_MONO_PORTRAIT_WIDTH) ||
-        y >= static_cast<std::int16_t>(FRONT_LIGHT_BAR_HEIGHT)) {
-        return false;
+    if (!has_pending_switch) {
+        return;
     }
 
-    button_index = static_cast<std::uint8_t>(
-        static_cast<std::uint32_t>(x) * FRONT_LIGHT_LEVEL_COUNT /
-        PAPER_MONO_PORTRAIT_WIDTH);
-    return button_index < FRONT_LIGHT_LEVEL_COUNT;
+    app_record& target_record = record_for(pending_target);
+    if (foreground_record == &target_record) {
+        has_pending_switch = false;
+        return;
+    }
+
+    if (foreground_record != nullptr) {
+        mooncake_runtime.closeApp(foreground_record->mooncake_id);
+    }
+    mooncake_runtime.openApp(target_record.mooncake_id);
+    foreground_record = &target_record;
+    input_manager_set_target(target_record.instance);
+    has_pending_switch = false;
+
+    ESP_LOGI(
+        log_tag,
+        "foreground app switched target=%s id=%d",
+        pending_target == app_kind::menu ? "menu" : "test",
+        target_record.mooncake_id);
 }
 
-void submit_front_light_button(
-    std::uint8_t button_index,
-    bool pressed,
-    bool apply_level)
+template <typename app_type>
+app_record install_app()
 {
-    front_light_request request = {};
-    request.button_index = button_index;
-    request.pressed = pressed;
-    request.apply_level = apply_level;
-
-    if (!hal_submit_front_light_request(request)) {
-        ESP_LOGW(log_tag, "front light request queue unavailable");
-    }
-}
-
-bool handle_front_light_event(const touch_event& event)
-{
-    if (event.type == touch_event_type::press) {
-        std::uint8_t button_index = 0;
-        if (!get_front_light_button_index(event.start_x, event.start_y, button_index)) {
-            return false;
-        }
-
-        state.front_light_button_active = true;
-        state.pressed_front_light_button = button_index;
-        submit_front_light_button(button_index, true, false);
-        ESP_LOGI(
-            log_tag,
-            "front light button pressed index=%u",
-            static_cast<unsigned>(button_index));
-        return true;
-    }
-
-    if (!state.front_light_button_active) {
-        return false;
-    }
-
-    if (event.type == touch_event_type::click) {
-        std::uint8_t release_button_index = 0;
-        const bool release_on_same_button =
-            get_front_light_button_index(event.end_x, event.end_y, release_button_index) &&
-            release_button_index == state.pressed_front_light_button;
-
-        if (release_on_same_button) {
-            state.front_light_level_index = state.pressed_front_light_button;
-        }
-        submit_front_light_button(
-            state.pressed_front_light_button,
-            false,
-            release_on_same_button);
-        ESP_LOGI(
-            log_tag,
-            "front light button released index=%u applied=%u",
-            static_cast<unsigned>(state.pressed_front_light_button),
-            release_on_same_button ? 1U : 0U);
-        state.front_light_button_active = false;
-        return true;
-    }
-
-    if (event.type == touch_event_type::long_press_end) {
-        // A long press restores the button but never changes the light level.
-        submit_front_light_button(state.pressed_front_light_button, false, false);
-        ESP_LOGI(
-            log_tag,
-            "front light long press released index=%u without applying",
-            static_cast<unsigned>(state.pressed_front_light_button));
-        state.front_light_button_active = false;
-    }
-
-    // Consume every long-press phase captured by a front-light button.
-    return true;
+    auto instance = std::make_unique<app_type>();
+    app_record record = {};
+    record.instance = instance.get();
+    record.mooncake_id = mooncake_runtime.installApp(std::move(instance));
+    return record;
 }
 
 }  // namespace
 
-void app_init()
+esp_err_t app_init()
 {
-    display_request initial_request = {};
-    initial_request.text_state = state.text_state;
-    initial_request.touch_type = touch_display_type::none;
-    initial_request.force_quality = true;
-    hal_submit_display_request(initial_request);
+    menu_record = install_app<menu_app>();
+    test_record = install_app<test_app>();
+    if (menu_record.mooncake_id < 0 || test_record.mooncake_id < 0) {
+        ESP_LOGE(log_tag, "failed to install Mooncake apps");
+        return ESP_FAIL;
+    }
+
+    app_request_switch(app_kind::menu);
+    ESP_LOGI(
+        log_tag,
+        "Mooncake apps installed menu_id=%d test_id=%d",
+        menu_record.mooncake_id,
+        test_record.mooncake_id);
+    return ESP_OK;
 }
 
-void app_loop()
+void app_update()
 {
-    touch_event event = {};
-    if (!hal_wait_touch_event(event)) {
-        return;
-    }
+    apply_pending_switch();
+    mooncake_runtime.update();
+}
 
-    if (handle_front_light_event(event)) {
-        return;
-    }
+void app_request_switch(app_kind target)
+{
+    pending_target = target;
+    has_pending_switch = true;
+}
 
-    switch (event.type) {
-        case touch_event_type::click:
-            // Only a single click is allowed to change the primary UI text.
-            state.text_state = ui_text_state::hello_world;
-            ESP_LOGI(log_tag, "single click changed text_state=hello_world");
-            submit_touch_frame(event, touch_display_type::click);
-            break;
-
-        case touch_event_type::long_press_start:
-        case touch_event_type::long_press_repeat:
-        case touch_event_type::long_press_end:
-            ESP_LOGI(
-                log_tag,
-                "long press frame type=%u duration=%lu ms",
-                static_cast<unsigned>(event.type),
-                static_cast<unsigned long>(event.duration_ms));
-            submit_touch_frame(event, touch_display_type::long_press);
-            break;
-
-        case touch_event_type::press:
-            break;
-    }
+bool app_switch_pending()
+{
+    return has_pending_switch;
 }

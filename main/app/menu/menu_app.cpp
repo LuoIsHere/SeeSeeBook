@@ -11,15 +11,18 @@ namespace {
 
 constexpr char log_tag[] = "app_menu";
 
-bool point_in_entry(std::int16_t x, std::int16_t y)
+bool get_entry_index(
+    std::int16_t x,
+    std::int16_t y,
+    std::uint8_t& entry_index)
 {
-    return ui_point_in_rect(
-        x,
-        y,
-        MENU_SCREEN_EDGE_MARGIN,
-        MENU_ENTRY_TOP,
-        PAPER_MONO_PORTRAIT_WIDTH - MENU_SCREEN_EDGE_MARGIN * 2,
-        MENU_ENTRY_HEIGHT);
+    for (std::uint8_t index = 0; index < MENU_ENTRY_COUNT; ++index) {
+        if (ui_point_in_rect(x, y, menu_entry_rect(index))) {
+            entry_index = index;
+            return true;
+        }
+    }
+    return false;
 }
 
 }  // namespace
@@ -38,38 +41,46 @@ void menu_app::handle_app_event(const app_event& event)
 
     const touch_event& touch = event.touch;
     if (touch.type == touch_event_type::press) {
-        if (!point_in_entry(touch.start_x, touch.start_y)) {
+        std::uint8_t entry_index = 0;
+        if (!get_entry_index(touch.start_x, touch.start_y, entry_index)) {
             return;
         }
-        entry_active_ = true;
-        submit_entry_feedback(true);
+        active_entry_index_ = static_cast<std::int8_t>(entry_index);
+        submit_entry_feedback(entry_index, true);
         return;
     }
 
-    if (!entry_active_) {
+    if (active_entry_index_ < 0) {
         return;
     }
 
     if (touch.type == touch_event_type::click) {
-        const bool released_inside = point_in_entry(touch.end_x, touch.end_y);
-        submit_entry_feedback(false);
-        entry_active_ = false;
+        const std::uint8_t captured_entry = static_cast<std::uint8_t>(active_entry_index_);
+        std::uint8_t released_entry = 0;
+        const bool released_inside =
+            get_entry_index(touch.end_x, touch.end_y, released_entry) &&
+            released_entry == captured_entry;
+        submit_entry_feedback(captured_entry, false);
+        active_entry_index_ = -1;
         if (released_inside) {
-            ESP_LOGI(log_tag, "TestApp entry selected");
-            app_request_switch(app_kind::test);
+            const app_kind target = captured_entry == 0U
+                                        ? app_kind::test
+                                        : app_kind::rtc_setting;
+            ESP_LOGI(log_tag, "menu entry selected index=%u", captured_entry);
+            app_request_switch(target);
         }
         return;
     }
 
     if (touch.type == touch_event_type::long_press_end) {
-        submit_entry_feedback(false);
-        entry_active_ = false;
+        submit_entry_feedback(static_cast<std::uint8_t>(active_entry_index_), false);
+        active_entry_index_ = -1;
     }
 }
 
 void menu_app::on_open()
 {
-    entry_active_ = false;
+    active_entry_index_ = -1;
     submit_frame(true);
     ESP_LOGI(log_tag, "MenuApp opened");
 }
@@ -85,10 +96,13 @@ void menu_app::submit_frame(bool force_quality)
     }
 }
 
-void menu_app::submit_entry_feedback(bool pressed)
+void menu_app::submit_entry_feedback(
+    std::uint8_t entry_index,
+    bool pressed)
 {
     display_control_request request = {};
     request.type = display_control_type::menu_entry;
+    request.button_index = entry_index;
     request.pressed = pressed;
     if (!hal_submit_display_control_request(request)) {
         ESP_LOGW(log_tag, "menu entry feedback queue unavailable");

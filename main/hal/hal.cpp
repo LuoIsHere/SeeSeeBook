@@ -22,6 +22,7 @@ QueueHandle_t display_request_queue = nullptr;
 QueueHandle_t display_control_queue = nullptr;
 TaskHandle_t touch_task_handle = nullptr;
 TaskHandle_t display_task_handle = nullptr;
+TaskHandle_t rtc_task_handle = nullptr;
 SemaphoreHandle_t internal_i2c_mutex = nullptr;
 gptimer_handle_t system_timer = nullptr;
 volatile std::uint32_t system_tick_ms = 0;
@@ -90,7 +91,7 @@ esp_err_t hal_init()
     auto m5_config = M5.config();
     m5_config.clear_display = false;
     m5_config.internal_imu = false;
-    m5_config.internal_rtc = false;
+    m5_config.internal_rtc = true;
     m5_config.internal_mic = false;
     m5_config.internal_spk = false;
     m5_config.fallback_board = m5::board_t::board_M5PaperMono;
@@ -118,6 +119,11 @@ esp_err_t hal_init()
         ESP_ERR_NO_MEM,
         log_tag,
         "start display task");
+    ESP_RETURN_ON_FALSE(
+        hal_rtc_start(internal_i2c_mutex, rtc_task_handle),
+        ESP_ERR_NO_MEM,
+        log_tag,
+        "start RTC task");
     ESP_RETURN_ON_FALSE(
         hal_touch_start(touch_event_queue, touch_task_handle),
         ESP_ERR_NO_MEM,
@@ -148,7 +154,24 @@ bool hal_submit_display_request(const display_request& request)
     if (display_request_queue == nullptr) {
         return false;
     }
-    const bool submitted = xQueueOverwrite(display_request_queue, &request) == pdTRUE;
+
+    display_request queued_request = request;
+    bool submitted = xQueueSend(display_request_queue, &queued_request, 0) == pdTRUE;
+    if (!submitted) {
+        display_request discarded_request = {};
+        if (xQueueReceive(display_request_queue, &discarded_request, 0) == pdTRUE) {
+            // Keep a lifecycle refresh even when its older frame data is coalesced.
+            if (discarded_request.force_quality) {
+                queued_request.force_quality = true;
+                queued_request.update_region = display_update_region::full;
+            }
+            submitted = xQueueSend(display_request_queue, &queued_request, 0) == pdTRUE;
+            ESP_LOGW(log_tag, "display request queue full; oldest frame coalesced");
+        } else {
+            // The display task may have freed the queue between the failed send and receive.
+            submitted = xQueueSend(display_request_queue, &queued_request, 0) == pdTRUE;
+        }
+    }
     if (submitted && display_task_handle != nullptr) {
         xTaskNotifyGive(display_task_handle);
     }

@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cstdint>
+
 #include "app_base.hpp"
 
 class menu_app final : public app_base {
@@ -12,8 +14,8 @@ protected:
     void on_open() override;
 
 private:
-    bool entry_active_ = false;
+    std::int8_t active_entry_index_ = -1;
 
     void submit_frame(bool force_quality);
-    void submit_entry_feedback(bool pressed);
+    void submit_entry_feedback(std::uint8_t entry_index, bool pressed);
 };

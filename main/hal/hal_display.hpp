@@ -23,7 +23,7 @@
 #define FRONT_LIGHT_LEVEL_75 192U
 #define FRONT_LIGHT_LEVEL_100 255U
 
-#define DISPLAY_REQUEST_QUEUE_LENGTH 1U
+#define DISPLAY_REQUEST_QUEUE_LENGTH 2U
 #define DISPLAY_CONTROL_QUEUE_LENGTH 16U
 #define DISPLAY_TASK_STACK_SIZE 6144U
 #define DISPLAY_TASK_PRIORITY 5U
@@ -37,6 +37,12 @@ enum class refresh_mode : std::uint8_t {
 enum class display_view : std::uint8_t {
     menu,
     test,
+    rtc_setting,
+};
+
+enum class display_update_region : std::uint8_t {
+    full,
+    rtc_editor,
 };
 
 enum class ui_text_state : std::uint8_t {
@@ -54,10 +60,43 @@ enum class display_control_type : std::uint8_t {
     front_light,
     menu_entry,
     back_button,
+    rtc_back_button,
+    rtc_key,
+};
+
+enum class rtc_edit_field : std::uint8_t {
+    none,
+    year,
+    month,
+    day,
+    hour,
+    minute,
+    second,
+};
+
+enum class rtc_setting_message : std::uint8_t {
+    none,
+    select_field,
+    incomplete,
+    invalid_date,
+    invalid_time,
+    rtc_unavailable,
+    saving,
+    write_failed,
+};
+
+struct rtc_setting_view_state {
+    std::uint8_t digits[14];
+    rtc_edit_field selected_field;
+    rtc_setting_message message;
+    bool loading;
+    bool saving;
+    bool rtc_available;
 };
 
 struct display_request {
     display_view view;
+    display_update_region update_region;
     ui_text_state text_state;
     touch_display_type touch_type;
     std::int16_t start_x;
@@ -68,6 +107,7 @@ struct display_request {
     std::uint32_t timestamp_ms;
     std::uint32_t minimum_refresh_interval_ms;
     bool force_quality;
+    rtc_setting_view_state rtc_setting;
 };
 
 struct display_control_request {
@@ -86,8 +126,11 @@ bool hal_display_start(
     QueueHandle_t control_queue,
     TaskHandle_t& task_handle);
 
-// Replaces a pending full frame with the latest application state without blocking.
+// Queues the latest application state while preserving lifecycle quality refreshes.
 bool hal_submit_display_request(const display_request& request);
 
 // Queues a visual control transition without blocking the Mooncake scheduler.
 bool hal_submit_display_control_request(const display_control_request& request);
+
+// Wakes the display worker so a changed global clock can refresh the status bar.
+void hal_request_status_bar_refresh();

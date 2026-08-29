@@ -5,6 +5,7 @@
 #include "esp_err.h"
 
 #include "hal_display.hpp"
+#include "hal_rtc.hpp"
 #include "hal_touch.hpp"
 
 // Initializes M5Unified, queues, worker tasks, and the 1 ms GPTimer.

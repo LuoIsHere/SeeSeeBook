@@ -4,16 +4,21 @@ idf_component_register(
         "app/app.cpp"
         "app/input_manager.cpp"
         "app/menu/menu_app.cpp"
+        "app/rtc_setting/rtc_setting_app.cpp"
         "app/test/test_app.cpp"
         "hal/hal.cpp"
         "hal/hal_display.cpp"
+        "hal/hal_rtc.cpp"
         "hal/hal_touch.cpp"
+        "ui/system_overlay.cpp"
     INCLUDE_DIRS
         "."
         "app"
         "app/menu"
+        "app/rtc_setting"
         "app/test"
         "hal"
+        "ui"
     PRIV_REQUIRES
         m5unified
         mooncake

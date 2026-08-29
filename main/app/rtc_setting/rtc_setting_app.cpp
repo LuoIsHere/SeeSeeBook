@@ -203,11 +203,11 @@ void rtc_setting_app::on_open()
     }
     state_.session_id = next_session_id;
     state_.loading = true;
-    submit_frame(true, display_update_region::full);
+    submit_frame(refresh_mode::quality, display_update_region::full);
     if (!hal_submit_rtc_read(state_.session_id)) {
         state_.loading = false;
         state_.message = rtc_setting_message::rtc_unavailable;
-        submit_frame(false, display_update_region::rtc_editor);
+        submit_frame(refresh_mode::fastest, display_update_region::rtc_editor);
     }
     ESP_LOGI(log_tag, "RTCSettingApp opened session_id=%lu", static_cast<unsigned long>(state_.session_id));
 }
@@ -239,13 +239,18 @@ void rtc_setting_app::reset_session()
 }
 
 void rtc_setting_app::submit_frame(
-    bool force_quality,
-    display_update_region update_region)
+    refresh_mode mode,
+    display_update_region update_region,
+    std::int8_t released_key_index)
 {
     display_request request = {};
     request.view = display_view::rtc_setting;
+    request.mode = mode;
     request.update_region = update_region;
-    request.force_quality = force_quality;
+    request.released_key_mask = released_key_index >= 0
+                                    ? static_cast<std::uint16_t>(1U << released_key_index)
+                                    : 0U;
+    request.allow_quality_cleanup = mode != refresh_mode::quality;
     std::copy(std::begin(state_.digits), std::end(state_.digits), request.rtc_setting.digits);
     request.rtc_setting.selected_field = state_.selected_field;
     request.rtc_setting.message = state_.message;
@@ -253,8 +258,8 @@ void rtc_setting_app::submit_frame(
     request.rtc_setting.saving = state_.saving;
     request.rtc_setting.rtc_available = state_.rtc_available;
 
-    // A forced frame marks a lifecycle transition and must not be deduplicated.
-    if (!force_quality && has_last_submitted_view_ &&
+    // Lifecycle and combined control frames must not be deduplicated.
+    if (mode != refresh_mode::quality && released_key_index < 0 && has_last_submitted_view_ &&
         rtc_view_states_equal(request.rtc_setting, last_submitted_view_)) {
         return;
     }
@@ -274,8 +279,11 @@ void rtc_setting_app::submit_control_feedback(
 {
     display_control_request request = {};
     request.type = type;
+    request.mode = refresh_mode::fastest;
+    request.update_region = display_update_region::control;
     request.button_index = button_index;
     request.pressed = pressed;
+    request.allow_quality_cleanup = !pressed;
     if (!hal_submit_display_control_request(request)) {
         ESP_LOGW(log_tag, "control feedback queue unavailable type=%u", static_cast<unsigned>(type));
     }
@@ -331,7 +339,6 @@ void rtc_setting_app::handle_touch_event(const touch_event& event)
 
         if (captured_control_ == captured_control::keypad) {
             const std::uint8_t captured_key = static_cast<std::uint8_t>(captured_index_);
-            submit_control_feedback(display_control_type::rtc_key, captured_key, false);
             std::uint8_t released_key = 0;
             const bool released_inside =
                 get_key_index(event.end_x, event.end_y, released_key) &&
@@ -341,6 +348,8 @@ void rtc_setting_app::handle_touch_event(const touch_event& event)
             state_.pressed_key = -1;
             if (released_inside) {
                 handle_key(captured_key);
+            } else {
+                submit_control_feedback(display_control_type::rtc_key, captured_key, false);
             }
             return;
         }
@@ -356,7 +365,7 @@ void rtc_setting_app::handle_touch_event(const touch_event& event)
                 state_.input_offset = 0U;
                 state_.field_input_started = false;
                 state_.message = rtc_setting_message::none;
-                submit_frame(false, display_update_region::rtc_editor);
+                submit_frame(refresh_mode::fastest, display_update_region::rtc_editor);
             }
             return;
         }
@@ -393,7 +402,7 @@ void rtc_setting_app::handle_rtc_event(const rtc_event& event)
         } else {
             state_.message = rtc_setting_message::rtc_unavailable;
         }
-        submit_frame(false, display_update_region::rtc_editor);
+        submit_frame(refresh_mode::fastest, display_update_region::rtc_editor);
         return;
     }
 
@@ -407,7 +416,7 @@ void rtc_setting_app::handle_rtc_event(const rtc_event& event)
 
     state_.saving = false;
     state_.message = rtc_setting_message::write_failed;
-    submit_frame(false, display_update_region::rtc_editor);
+    submit_frame(refresh_mode::fastest, display_update_region::rtc_editor);
 }
 
 void rtc_setting_app::handle_key(std::uint8_t key_index)
@@ -417,20 +426,27 @@ void rtc_setting_app::handle_key(std::uint8_t key_index)
     }
     const std::int8_t value = key_values[key_index];
     if (value == key_action_save) {
-        save_datetime();
+        save_datetime(static_cast<std::int8_t>(key_index));
     } else if (value == key_action_backspace) {
-        clear_selected_field();
+        clear_selected_field(static_cast<std::int8_t>(key_index));
     } else {
-        input_digit(static_cast<std::uint8_t>(value));
+        input_digit(
+            static_cast<std::uint8_t>(value),
+            static_cast<std::int8_t>(key_index));
     }
 }
 
-void rtc_setting_app::input_digit(std::uint8_t digit)
+void rtc_setting_app::input_digit(
+    std::uint8_t digit,
+    std::int8_t released_key_index)
 {
     const field_range range = range_for_field(state_.selected_field);
     if (range.length == 0U) {
         state_.message = rtc_setting_message::select_field;
-        submit_frame(false, display_update_region::rtc_editor);
+        submit_frame(
+            refresh_mode::fastest,
+            display_update_region::rtc_editor_and_key,
+            released_key_index);
         return;
     }
 
@@ -449,15 +465,21 @@ void rtc_setting_app::input_digit(std::uint8_t digit)
         state_.input_offset = 0U;
         state_.field_input_started = false;
     }
-    submit_frame(false, display_update_region::rtc_editor);
+    submit_frame(
+        refresh_mode::fastest,
+        display_update_region::rtc_editor_and_key,
+        released_key_index);
 }
 
-void rtc_setting_app::clear_selected_field()
+void rtc_setting_app::clear_selected_field(std::int8_t released_key_index)
 {
     const field_range range = range_for_field(state_.selected_field);
     if (range.length == 0U) {
         state_.message = rtc_setting_message::select_field;
-        submit_frame(false, display_update_region::rtc_editor);
+        submit_frame(
+            refresh_mode::fastest,
+            display_update_region::rtc_editor_and_key,
+            released_key_index);
         return;
     }
 
@@ -466,27 +488,35 @@ void rtc_setting_app::clear_selected_field()
     state_.field_input_started = true;
     state_.dirty = true;
     state_.message = rtc_setting_message::none;
-    submit_frame(false, display_update_region::rtc_editor);
+    submit_frame(
+        refresh_mode::fastest,
+        display_update_region::rtc_editor_and_key,
+        released_key_index);
 }
 
-void rtc_setting_app::save_datetime()
+void rtc_setting_app::save_datetime(std::int8_t released_key_index)
 {
     rtc_datetime datetime = {};
     rtc_setting_message error = rtc_setting_message::none;
     if (!build_datetime(datetime, error)) {
         state_.message = error;
-        submit_frame(false, display_update_region::rtc_editor);
+        submit_frame(
+            refresh_mode::fastest,
+            display_update_region::rtc_editor_and_key,
+            released_key_index);
         return;
     }
 
     state_.saving = true;
     state_.message = rtc_setting_message::saving;
-    submit_frame(false, display_update_region::rtc_editor);
     if (!hal_submit_rtc_write(datetime, state_.session_id)) {
         state_.saving = false;
         state_.message = rtc_setting_message::write_failed;
-        submit_frame(false, display_update_region::rtc_editor);
     }
+    submit_frame(
+        refresh_mode::fastest,
+        display_update_region::rtc_editor_and_key,
+        released_key_index);
 }
 
 bool rtc_setting_app::build_datetime(

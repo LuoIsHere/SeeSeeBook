@@ -46,7 +46,10 @@ private:
     bool has_last_submitted_view_ = false;
 
     void reset_session();
-    void submit_frame(bool force_quality, display_update_region update_region);
+    void submit_frame(
+        refresh_mode mode,
+        display_update_region update_region,
+        std::int8_t released_key_index = -1);
     void submit_control_feedback(
         display_control_type type,
         std::uint8_t button_index,
@@ -54,8 +57,8 @@ private:
     void handle_touch_event(const touch_event& event);
     void handle_rtc_event(const rtc_event& event);
     void handle_key(std::uint8_t key_index);
-    void input_digit(std::uint8_t digit);
-    void clear_selected_field();
-    void save_datetime();
+    void input_digit(std::uint8_t digit, std::int8_t released_key_index);
+    void clear_selected_field(std::int8_t released_key_index);
+    void save_datetime(std::int8_t released_key_index);
     bool build_datetime(rtc_datetime& datetime, rtc_setting_message& error) const;
 };

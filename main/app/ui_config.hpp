@@ -39,6 +39,7 @@
 #define STATUS_BAR_HEIGHT 24
 #define STATUS_BAR_LEFT_MARGIN 12
 #define STATUS_BAR_TEXT_SIZE 1U
+#define STATUS_CLOCK_REGION_WIDTH 96
 #define STATUS_BAR_IDLE_REFRESH_INTERVAL_MS 60000U
 
 #define TEST_BACK_BUTTON_LEFT 24
@@ -46,6 +47,8 @@
 #define TEST_BACK_BUTTON_WIDTH 136
 #define TEST_BACK_BUTTON_HEIGHT 56
 #define TEST_BACK_BUTTON_TEXT_SIZE 2U
+#define TEST_CONTENT_REGION_TOP FRONT_LIGHT_BAR_HEIGHT
+#define TEST_CONTENT_REGION_HEIGHT (TEST_BACK_BUTTON_TOP - TEST_CONTENT_REGION_TOP)
 
 struct ui_rect {
     std::int16_t left;
@@ -88,6 +91,16 @@ constexpr ui_rect rtc_back_button_rect()
         RTC_BACK_BUTTON_TOP,
         RTC_BACK_BUTTON_WIDTH,
         RTC_BACK_BUTTON_HEIGHT,
+    };
+}
+
+constexpr ui_rect status_clock_rect()
+{
+    return {
+        0,
+        STATUS_BAR_TOP + 1,
+        STATUS_CLOCK_REGION_WIDTH,
+        STATUS_BAR_HEIGHT - 1,
     };
 }
 

@@ -160,9 +160,10 @@ bool hal_submit_display_request(const display_request& request)
     if (!submitted) {
         display_request discarded_request = {};
         if (xQueueReceive(display_request_queue, &discarded_request, 0) == pdTRUE) {
+            queued_request.released_key_mask |= discarded_request.released_key_mask;
             // Keep a lifecycle refresh even when its older frame data is coalesced.
-            if (discarded_request.force_quality) {
-                queued_request.force_quality = true;
+            if (discarded_request.mode == refresh_mode::quality) {
+                queued_request.mode = refresh_mode::quality;
                 queued_request.update_region = display_update_region::full;
             }
             submitted = xQueueSend(display_request_queue, &queued_request, 0) == pdTRUE;

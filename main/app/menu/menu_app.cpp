@@ -81,16 +81,20 @@ void menu_app::handle_app_event(const app_event& event)
 void menu_app::on_open()
 {
     active_entry_index_ = -1;
-    submit_frame(true);
+    submit_frame(refresh_mode::quality, display_update_region::full);
     ESP_LOGI(log_tag, "MenuApp opened");
 }
 
-void menu_app::submit_frame(bool force_quality)
+void menu_app::submit_frame(
+    refresh_mode mode,
+    display_update_region update_region)
 {
     display_request request = {};
     request.view = display_view::menu;
+    request.mode = mode;
+    request.update_region = update_region;
     request.touch_type = touch_display_type::none;
-    request.force_quality = force_quality;
+    request.allow_quality_cleanup = true;
     if (!hal_submit_display_request(request)) {
         ESP_LOGW(log_tag, "display request queue unavailable");
     }
@@ -102,8 +106,11 @@ void menu_app::submit_entry_feedback(
 {
     display_control_request request = {};
     request.type = display_control_type::menu_entry;
+    request.mode = refresh_mode::fastest;
+    request.update_region = display_update_region::control;
     request.button_index = entry_index;
     request.pressed = pressed;
+    request.allow_quality_cleanup = !pressed;
     if (!hal_submit_display_control_request(request)) {
         ESP_LOGW(log_tag, "menu entry feedback queue unavailable");
     }

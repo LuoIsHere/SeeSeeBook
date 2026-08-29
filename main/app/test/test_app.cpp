@@ -95,6 +95,10 @@ void test_app::submit_touch_frame(
 {
     display_request request = {};
     request.view = display_view::test;
+    request.mode = touch_type == touch_display_type::click
+                       ? refresh_mode::fast
+                       : refresh_mode::fastest;
+    request.update_region = display_update_region::test_content;
     request.text_state = text_state_;
     request.touch_type = touch_type;
     request.start_x = event.start_x;
@@ -105,6 +109,7 @@ void test_app::submit_touch_frame(
     request.timestamp_ms = event.timestamp_ms;
     request.minimum_refresh_interval_ms =
         touch_type == touch_display_type::long_press ? LONG_PRESS_REFRESH_INTERVAL_MS : 0U;
+    request.allow_quality_cleanup = touch_type == touch_display_type::click;
 
     if (!hal_submit_display_request(request)) {
         ESP_LOGW(log_tag, "display request queue unavailable");
@@ -115,9 +120,11 @@ void test_app::submit_initial_frame()
 {
     display_request request = {};
     request.view = display_view::test;
+    request.mode = refresh_mode::quality;
+    request.update_region = display_update_region::full;
     request.text_state = text_state_;
     request.touch_type = touch_display_type::none;
-    request.force_quality = true;
+    request.allow_quality_cleanup = true;
     if (!hal_submit_display_request(request)) {
         ESP_LOGW(log_tag, "initial display request queue unavailable");
     }
@@ -131,9 +138,12 @@ void test_app::submit_control_feedback(
 {
     display_control_request request = {};
     request.type = type;
+    request.mode = refresh_mode::fastest;
+    request.update_region = display_update_region::control;
     request.button_index = button_index;
     request.pressed = pressed;
     request.apply_level = apply_level;
+    request.allow_quality_cleanup = !pressed;
     if (!hal_submit_display_control_request(request)) {
         ESP_LOGW(log_tag, "display control queue unavailable type=%u", static_cast<unsigned>(type));
     }

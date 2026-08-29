@@ -3,6 +3,7 @@
 #include <cstdint>
 
 #include "app_base.hpp"
+#include "hal_display.hpp"
 
 class menu_app final : public app_base {
 public:
@@ -16,6 +17,6 @@ protected:
 private:
     std::int8_t active_entry_index_ = -1;
 
-    void submit_frame(bool force_quality);
+    void submit_frame(refresh_mode mode, display_update_region update_region);
     void submit_entry_feedback(std::uint8_t entry_index, bool pressed);
 };

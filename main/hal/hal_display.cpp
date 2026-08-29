@@ -41,9 +41,12 @@ QueueHandle_t request_queue = nullptr;
 QueueHandle_t control_queue = nullptr;
 TaskHandle_t display_task_handle = nullptr;
 
-struct refresh_policy {
-    std::uint8_t fastest_count = 0;
-    std::uint8_t fast_count = 0;
+struct ghost_debt {
+    std::uint16_t control = 0;
+    std::uint16_t rtc_editor = 0;
+    std::uint16_t status_clock = 0;
+    std::uint16_t test_content = 0;
+    bool cleanup_pending = false;
 };
 
 const char* main_text(ui_text_state text_state)
@@ -79,32 +82,98 @@ void apply_refresh_mode(refresh_mode mode)
     }
 }
 
-refresh_mode select_refresh_mode(const refresh_policy& policy)
+std::uint16_t& debt_for_region(
+    ghost_debt& debt,
+    display_update_region update_region)
 {
-    if (policy.fast_count >= EPD_FAST_REFRESH_LIMIT) {
-        return refresh_mode::quality;
+    switch (update_region) {
+        case display_update_region::control:
+            return debt.control;
+        case display_update_region::rtc_editor:
+        case display_update_region::rtc_editor_and_key:
+            return debt.rtc_editor;
+        case display_update_region::status_clock:
+            return debt.status_clock;
+        case display_update_region::test_content:
+            return debt.test_content;
+        case display_update_region::full:
+            return debt.test_content;
     }
-    if (policy.fastest_count >= EPD_FASTEST_REFRESH_LIMIT) {
-        return refresh_mode::fast;
-    }
-    return refresh_mode::fastest;
+    return debt.test_content;
 }
 
-void record_completed_refresh(refresh_policy& policy, refresh_mode completed_mode)
+std::uint16_t debt_limit(display_update_region update_region)
 {
-    switch (completed_mode) {
-        case refresh_mode::fastest:
-            ++policy.fastest_count;
-            break;
-        case refresh_mode::fast:
-            policy.fastest_count = 0;
-            ++policy.fast_count;
-            break;
-        case refresh_mode::quality:
-            policy.fastest_count = 0;
-            policy.fast_count = 0;
-            break;
+    switch (update_region) {
+        case display_update_region::control:
+            return CONTROL_GHOST_DEBT_LIMIT;
+        case display_update_region::rtc_editor:
+        case display_update_region::rtc_editor_and_key:
+            return RTC_EDITOR_GHOST_DEBT_LIMIT;
+        case display_update_region::status_clock:
+            return STATUS_CLOCK_GHOST_DEBT_LIMIT;
+        case display_update_region::test_content:
+            return TEST_CONTENT_GHOST_DEBT_LIMIT;
+        case display_update_region::full:
+            return TEST_CONTENT_GHOST_DEBT_LIMIT;
     }
+    return TEST_CONTENT_GHOST_DEBT_LIMIT;
+}
+
+void update_cleanup_pending(ghost_debt& debt)
+{
+    debt.cleanup_pending =
+        debt.control >= CONTROL_GHOST_DEBT_LIMIT ||
+        debt.rtc_editor >= RTC_EDITOR_GHOST_DEBT_LIMIT ||
+        debt.status_clock >= STATUS_CLOCK_GHOST_DEBT_LIMIT ||
+        debt.test_content >= TEST_CONTENT_GHOST_DEBT_LIMIT;
+}
+
+void record_completed_refresh(
+    ghost_debt& debt,
+    refresh_mode completed_mode,
+    display_update_region update_region)
+{
+    const bool cleanup_was_pending = debt.cleanup_pending;
+    if (completed_mode == refresh_mode::quality) {
+        debt = {};
+    } else {
+        std::uint16_t& region_debt = debt_for_region(debt, update_region);
+        if (completed_mode == refresh_mode::fastest) {
+            if (region_debt < UINT16_MAX) {
+                ++region_debt;
+            }
+        } else if (completed_mode == refresh_mode::fast) {
+            region_debt = 0;
+        }
+        update_cleanup_pending(debt);
+    }
+
+    if (!cleanup_was_pending && debt.cleanup_pending) {
+        ESP_LOGI(
+            log_tag,
+            "ghost cleanup pending control=%u rtc=%u status=%u test=%u",
+            static_cast<unsigned>(debt.control),
+            static_cast<unsigned>(debt.rtc_editor),
+            static_cast<unsigned>(debt.status_clock),
+            static_cast<unsigned>(debt.test_content));
+    }
+}
+
+refresh_mode resolve_refresh_mode(
+    refresh_mode requested_mode,
+    display_update_region update_region,
+    bool allow_quality_cleanup,
+    const ghost_debt& debt)
+{
+    if (requested_mode == refresh_mode::quality) {
+        return refresh_mode::quality;
+    }
+    if (update_region != display_update_region::status_clock &&
+        allow_quality_cleanup && debt.cleanup_pending) {
+        return refresh_mode::quality;
+    }
+    return requested_mode;
 }
 
 bool overlay_states_equal(
@@ -122,7 +191,7 @@ void draw_centered_line(const char* text, std::int32_t y, std::uint8_t text_size
     M5.Display.drawString(text, M5.Display.width() / 2, y);
 }
 
-void draw_status_bar(const system_overlay_state& overlay)
+void draw_status_clock(const system_overlay_state& overlay)
 {
     char time_buffer[8];
     if (overlay.time_valid) {
@@ -136,8 +205,8 @@ void draw_status_bar(const system_overlay_state& overlay)
         std::snprintf(time_buffer, sizeof(time_buffer), "--:--");
     }
 
-    M5.Display.fillRect(0, STATUS_BAR_TOP, M5.Display.width(), STATUS_BAR_HEIGHT, TFT_WHITE);
-    M5.Display.drawFastHLine(0, STATUS_BAR_TOP, M5.Display.width(), TFT_BLACK);
+    const ui_rect rect = status_clock_rect();
+    M5.Display.fillRect(rect.left, rect.top, rect.width, rect.height, TFT_WHITE);
     M5.Display.setTextColor(TFT_BLACK, TFT_WHITE);
     M5.Display.setTextDatum(textdatum_t::middle_left);
     M5.Display.setTextSize(STATUS_BAR_TEXT_SIZE);
@@ -145,6 +214,13 @@ void draw_status_bar(const system_overlay_state& overlay)
         time_buffer,
         STATUS_BAR_LEFT_MARGIN,
         STATUS_BAR_TOP + STATUS_BAR_HEIGHT / 2);
+}
+
+void draw_status_bar(const system_overlay_state& overlay)
+{
+    M5.Display.fillRect(0, STATUS_BAR_TOP, M5.Display.width(), STATUS_BAR_HEIGHT, TFT_WHITE);
+    M5.Display.drawFastHLine(0, STATUS_BAR_TOP, M5.Display.width(), TFT_BLACK);
+    draw_status_clock(overlay);
 }
 
 void draw_front_light_bar(
@@ -424,17 +500,17 @@ void draw_menu_request()
     }
 }
 
-void draw_test_request(
-    const display_request& request,
-    std::uint8_t selected_button,
-    std::int16_t pressed_button)
+void draw_test_content(const display_request& request)
 {
     const auto height = M5.Display.height();
     char line_buffer[64];
 
-    M5.Display.fillScreen(TFT_WHITE);
-    draw_front_light_bar(selected_button, pressed_button);
-    draw_test_back_button(false);
+    M5.Display.fillRect(
+        0,
+        TEST_CONTENT_REGION_TOP,
+        M5.Display.width(),
+        TEST_CONTENT_REGION_HEIGHT,
+        TFT_WHITE);
     M5.Display.setTextColor(TFT_BLACK, TFT_WHITE);
     draw_centered_line(main_text(request.text_state), height / 2, 4);
 
@@ -476,6 +552,17 @@ void draw_test_request(
     }
 }
 
+void draw_test_request(
+    const display_request& request,
+    std::uint8_t selected_button,
+    std::int16_t pressed_button)
+{
+    M5.Display.fillScreen(TFT_WHITE);
+    draw_front_light_bar(selected_button, pressed_button);
+    draw_test_back_button(false);
+    draw_test_content(request);
+}
+
 void draw_rtc_request(const display_request& request)
 {
     M5.Display.fillScreen(TFT_WHITE);
@@ -509,7 +596,7 @@ void draw_request(
 void refresh_full_screen(
     const display_request& request,
     refresh_mode active_mode,
-    refresh_policy& policy,
+    ghost_debt& debt,
     std::uint8_t selected_button,
     std::int16_t pressed_button,
     std::uint32_t& last_refresh_tick_ms,
@@ -523,39 +610,88 @@ void refresh_full_screen(
     M5.Display.display();
     M5.Display.waitDisplay();
     last_refresh_tick_ms = hal_get_tick_ms();
-    record_completed_refresh(policy, active_mode);
+    record_completed_refresh(debt, active_mode, request.update_region);
     ESP_LOGI(
         log_tag,
-        "full refresh complete mode=%s view=%u fastest_count=%u fast_count=%u",
+        "full refresh complete mode=%s view=%u region=%u cleanup_pending=%u",
         refresh_mode_name(active_mode),
         static_cast<unsigned>(request.view),
-        static_cast<unsigned>(policy.fastest_count),
-        static_cast<unsigned>(policy.fast_count));
+        static_cast<unsigned>(request.update_region),
+        debt.cleanup_pending ? 1U : 0U);
+}
+
+ui_rect merged_rect(const ui_rect& first, const ui_rect& second)
+{
+    const std::int16_t left = std::min(first.left, second.left);
+    const std::int16_t top = std::min(first.top, second.top);
+    const std::int16_t right = std::max(
+        static_cast<std::int16_t>(first.left + first.width),
+        static_cast<std::int16_t>(second.left + second.width));
+    const std::int16_t bottom = std::max(
+        static_cast<std::int16_t>(first.top + first.height),
+        static_cast<std::int16_t>(second.top + second.height));
+    return {
+        left,
+        top,
+        static_cast<std::int16_t>(right - left),
+        static_cast<std::int16_t>(bottom - top),
+    };
 }
 
 void refresh_rtc_editor(
     const display_request& request,
     refresh_mode active_mode,
-    refresh_policy& policy,
+    ghost_debt& debt,
+    std::uint32_t& last_refresh_tick_ms)
+{
+    ui_rect rect = {
+        0,
+        RTC_EDITOR_REGION_TOP,
+        static_cast<std::int16_t>(M5.Display.width()),
+        RTC_EDITOR_REGION_HEIGHT,
+    };
+    M5.Display.waitDisplay();
+    apply_refresh_mode(active_mode);
+    draw_rtc_editor(request.rtc_setting);
+    if (request.update_region == display_update_region::rtc_editor_and_key) {
+        for (std::uint8_t key_index = 0; key_index < RTC_KEY_COUNT; ++key_index) {
+            if ((request.released_key_mask & (1U << key_index)) == 0U) {
+                continue;
+            }
+            const ui_rect key_rect = rtc_key_rect(key_index);
+            draw_rtc_key(key_index, false);
+            rect = merged_rect(rect, key_rect);
+        }
+    }
+    M5.Display.display(rect.left, rect.top, rect.width, rect.height);
+    M5.Display.waitDisplay();
+    last_refresh_tick_ms = hal_get_tick_ms();
+    record_completed_refresh(debt, active_mode, request.update_region);
+}
+
+void refresh_test_content(
+    const display_request& request,
+    refresh_mode active_mode,
+    ghost_debt& debt,
     std::uint32_t& last_refresh_tick_ms)
 {
     M5.Display.waitDisplay();
     apply_refresh_mode(active_mode);
-    draw_rtc_editor(request.rtc_setting);
+    draw_test_content(request);
     M5.Display.display(
         0,
-        RTC_EDITOR_REGION_TOP,
+        TEST_CONTENT_REGION_TOP,
         M5.Display.width(),
-        RTC_EDITOR_REGION_HEIGHT);
+        TEST_CONTENT_REGION_HEIGHT);
     M5.Display.waitDisplay();
     last_refresh_tick_ms = hal_get_tick_ms();
-    record_completed_refresh(policy, active_mode);
+    record_completed_refresh(debt, active_mode, display_update_region::test_content);
 }
 
 void refresh_control_region(
     const display_control_request& request,
     refresh_mode active_mode,
-    refresh_policy& policy,
+    ghost_debt& debt,
     std::uint8_t selected_button,
     std::int16_t pressed_button,
     std::uint32_t& last_refresh_tick_ms)
@@ -593,31 +729,38 @@ void refresh_control_region(
     M5.Display.display(rect.left, rect.top, rect.width, rect.height);
     M5.Display.waitDisplay();
     last_refresh_tick_ms = hal_get_tick_ms();
-    record_completed_refresh(policy, active_mode);
+    record_completed_refresh(debt, active_mode, request.update_region);
 }
 
 void refresh_status_bar(
-    refresh_policy& policy,
+    ghost_debt& debt,
     std::uint32_t& last_refresh_tick_ms,
     system_overlay_state& displayed_overlay)
 {
-    const refresh_mode active_mode = select_refresh_mode(policy);
+    constexpr refresh_mode active_mode = refresh_mode::fastest;
+    const ui_rect rect = status_clock_rect();
     M5.Display.waitDisplay();
     apply_refresh_mode(active_mode);
     displayed_overlay = system_overlay_get_state();
-    draw_status_bar(displayed_overlay);
-    // Clock-only updates must never expand into a full-screen EPD refresh.
-    M5.Display.display(0, STATUS_BAR_TOP, M5.Display.width(), STATUS_BAR_HEIGHT);
+    draw_status_clock(displayed_overlay);
+    M5.Display.display(rect.left, rect.top, rect.width, rect.height);
     M5.Display.waitDisplay();
     last_refresh_tick_ms = hal_get_tick_ms();
-    record_completed_refresh(policy, active_mode);
-    ESP_LOGI(log_tag, "status bar refresh complete mode=%s", refresh_mode_name(active_mode));
+    record_completed_refresh(
+        debt,
+        active_mode,
+        display_update_region::status_clock);
+    ESP_LOGI(
+        log_tag,
+        "status clock refresh complete mode=%s debt=%u",
+        refresh_mode_name(active_mode),
+        static_cast<unsigned>(debt.status_clock));
 }
 
 void process_display_control_request(
     const display_control_request& request,
     const display_request& latest_request,
-    refresh_policy& policy,
+    ghost_debt& debt,
     std::uint8_t& selected_button,
     std::int16_t& pressed_button,
     std::uint32_t& last_refresh_tick_ms,
@@ -643,19 +786,23 @@ void process_display_control_request(
 
     const refresh_mode active_mode = request.pressed
                                          ? refresh_mode::fastest
-                                         : select_refresh_mode(policy);
+                                         : resolve_refresh_mode(
+                                               request.mode,
+                                               request.update_region,
+                                               request.allow_quality_cleanup,
+                                               debt);
     if (active_mode == refresh_mode::quality) {
         refresh_control_region(
             request,
             refresh_mode::fastest,
-            policy,
+            debt,
             selected_button,
             pressed_button,
             last_refresh_tick_ms);
         refresh_full_screen(
             latest_request,
             refresh_mode::quality,
-            policy,
+            debt,
             selected_button,
             pressed_button,
             last_refresh_tick_ms,
@@ -665,7 +812,7 @@ void process_display_control_request(
     refresh_control_region(
         request,
         active_mode,
-        policy,
+        debt,
         selected_button,
         pressed_button,
         last_refresh_tick_ms);
@@ -703,7 +850,7 @@ TickType_t status_wait_ticks(std::uint32_t status_schedule_tick_ms)
 
 void display_task(void*)
 {
-    refresh_policy policy;
+    ghost_debt debt;
     display_request latest_request = {};
     display_request pending_request = {};
     std::uint8_t selected_button = FRONT_LIGHT_DEFAULT_LEVEL_INDEX;
@@ -716,6 +863,7 @@ void display_task(void*)
     bool has_displayed_overlay = false;
 
     latest_request.view = display_view::menu;
+    latest_request.mode = refresh_mode::quality;
     latest_request.update_region = display_update_region::full;
     latest_request.touch_type = touch_display_type::none;
 
@@ -734,7 +882,7 @@ void display_task(void*)
             process_display_control_request(
                 control_request,
                 latest_request,
-                policy,
+                debt,
                 selected_button,
                 pressed_button,
                 last_refresh_tick_ms,
@@ -745,9 +893,12 @@ void display_task(void*)
 
         display_request newer_request = {};
         while (xQueueReceive(request_queue, &newer_request, 0) == pdTRUE) {
+            if (has_pending_request) {
+                newer_request.released_key_mask |= pending_request.released_key_mask;
+            }
             // Render only the newest content, but never lose an earlier lifecycle Quality request.
-            if (has_pending_request && pending_request.force_quality) {
-                newer_request.force_quality = true;
+            if (has_pending_request && pending_request.mode == refresh_mode::quality) {
+                newer_request.mode = refresh_mode::quality;
                 newer_request.update_region = display_update_region::full;
             }
             pending_request = newer_request;
@@ -758,26 +909,42 @@ void display_task(void*)
             display_request_is_due(pending_request, last_refresh_tick_ms, has_refreshed)) {
             const bool rtc_page_is_current =
                 has_refreshed && latest_request.view == display_view::rtc_setting;
+            const bool test_page_is_current =
+                has_refreshed && latest_request.view == display_view::test;
             latest_request = pending_request;
-            const refresh_mode active_mode = pending_request.force_quality
-                                                 ? refresh_mode::quality
-                                                 : select_refresh_mode(policy);
+            const refresh_mode active_mode = resolve_refresh_mode(
+                pending_request.mode,
+                pending_request.update_region,
+                pending_request.allow_quality_cleanup,
+                debt);
             const bool partial_rtc_editor =
                 pending_request.view == display_view::rtc_setting &&
-                pending_request.update_region == display_update_region::rtc_editor &&
+                (pending_request.update_region == display_update_region::rtc_editor ||
+                 pending_request.update_region == display_update_region::rtc_editor_and_key) &&
                 rtc_page_is_current &&
                 active_mode != refresh_mode::quality;
+            const bool partial_test_content =
+                pending_request.view == display_view::test &&
+                pending_request.update_region == display_update_region::test_content &&
+                test_page_is_current &&
+                active_mode == refresh_mode::fastest;
             if (partial_rtc_editor) {
                 refresh_rtc_editor(
                     pending_request,
                     active_mode,
-                    policy,
+                    debt,
+                    last_refresh_tick_ms);
+            } else if (partial_test_content) {
+                refresh_test_content(
+                    pending_request,
+                    active_mode,
+                    debt,
                     last_refresh_tick_ms);
             } else {
                 refresh_full_screen(
                     pending_request,
                     active_mode,
-                    policy,
+                    debt,
                     selected_button,
                     pressed_button,
                     last_refresh_tick_ms,
@@ -801,7 +968,7 @@ void display_task(void*)
         if (overlay_changed || status_due) {
             if (overlay_changed) {
                 refresh_status_bar(
-                    policy,
+                    debt,
                     last_refresh_tick_ms,
                     displayed_overlay);
                 has_refreshed = true;

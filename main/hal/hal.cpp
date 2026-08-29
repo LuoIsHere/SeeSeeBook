@@ -7,9 +7,9 @@
 #include <esp_log.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>
-#include <freertos/semphr.h>
 #include <freertos/task.h>
 
+#include "hal_internal_i2c.hpp"
 #include "system_config.hpp"
 #include "types.hpp"
 
@@ -24,7 +24,6 @@ TaskHandle_t touch_task_handle = nullptr;
 TaskHandle_t display_task_handle = nullptr;
 TaskHandle_t rtc_task_handle = nullptr;
 TaskHandle_t battery_task_handle = nullptr;
-SemaphoreHandle_t internal_i2c_mutex = nullptr;
 gptimer_handle_t system_timer = nullptr;
 volatile std::uint32_t system_tick_ms = 0;
 std::uint32_t touch_notification_elapsed_ms = 0;
@@ -81,13 +80,17 @@ esp_err_t hal_init()
     display_request_queue = xQueueCreate(DISPLAY_REQUEST_QUEUE_LENGTH, sizeof(display_request));
     display_control_queue =
         xQueueCreate(DISPLAY_CONTROL_QUEUE_LENGTH, sizeof(display_control_request));
-    internal_i2c_mutex = xSemaphoreCreateMutex();
     ESP_RETURN_ON_FALSE(
         touch_event_queue != nullptr && display_request_queue != nullptr &&
-            display_control_queue != nullptr && internal_i2c_mutex != nullptr,
+            display_control_queue != nullptr,
         ESP_ERR_NO_MEM,
         log_tag,
         "create HAL synchronization objects");
+    ESP_RETURN_ON_FALSE(
+        hal_internal_i2c_init(),
+        ESP_ERR_NO_MEM,
+        log_tag,
+        "initialize internal I2C bus service");
 
     auto m5_config = M5.config();
     m5_config.clear_display = false;
@@ -121,21 +124,21 @@ esp_err_t hal_init()
         log_tag,
         "start display task");
     ESP_RETURN_ON_FALSE(
-        hal_rtc_start(internal_i2c_mutex, rtc_task_handle),
-        ESP_ERR_NO_MEM,
-        log_tag,
-        "start RTC task");
-    ESP_RETURN_ON_FALSE(
-        hal_battery_start(internal_i2c_mutex, battery_task_handle),
-        ESP_ERR_NO_MEM,
-        log_tag,
-        "start battery task");
-    ESP_RETURN_ON_FALSE(
         hal_touch_start(touch_event_queue, touch_task_handle),
         ESP_ERR_NO_MEM,
         log_tag,
         "start touch task");
     ESP_RETURN_ON_ERROR(system_timer_init(), log_tag, "initialize system timer");
+    ESP_RETURN_ON_FALSE(
+        hal_rtc_start(rtc_task_handle),
+        ESP_ERR_NO_MEM,
+        log_tag,
+        "start RTC task");
+    ESP_RETURN_ON_FALSE(
+        hal_battery_start(battery_task_handle),
+        ESP_ERR_NO_MEM,
+        log_tag,
+        "start battery task");
 
     ESP_LOGI(
         log_tag,
@@ -205,26 +208,26 @@ bool hal_submit_display_control_request(const display_control_request& request)
     return submitted;
 }
 
-void hal_update_m5()
+bool hal_update_m5()
 {
-    if (internal_i2c_mutex == nullptr) {
-        return;
+    internal_i2c_guard bus_guard(INTERNAL_I2C_TOUCH_TIMEOUT_MS);
+    if (!bus_guard.locked()) {
+        return false;
     }
 
-    xSemaphoreTake(internal_i2c_mutex, portMAX_DELAY);
     M5.update();
-    xSemaphoreGive(internal_i2c_mutex);
+    return true;
 }
 
 void hal_set_front_light(std::uint8_t brightness)
 {
-    if (internal_i2c_mutex == nullptr) {
+    internal_i2c_guard bus_guard(INTERNAL_I2C_FRONT_LIGHT_TIMEOUT_MS);
+    if (!bus_guard.locked()) {
+        ESP_LOGW(log_tag, "front light update skipped; internal I2C bus busy");
         return;
     }
 
-    xSemaphoreTake(internal_i2c_mutex, portMAX_DELAY);
     M5.Display.setBrightness(brightness);
-    xSemaphoreGive(internal_i2c_mutex);
 }
 
 std::uint32_t hal_get_tick_ms()

@@ -211,7 +211,9 @@ void touch_task(void*)
     for (;;) {
         // Multiple timer notifications may collapse into one state update after scheduling delays.
         ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
-        hal_update_m5();
+        if (!hal_update_m5()) {
+            continue;
+        }
         update_touch_state(context, hal_get_tick_ms());
     }
 }

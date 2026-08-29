@@ -5,6 +5,7 @@
 #include <freertos/queue.h>
 
 #include "hal.hpp"
+#include "hal_internal_i2c.hpp"
 
 namespace {
 
@@ -20,7 +21,6 @@ struct rtc_request {
 
 QueueHandle_t request_queue = nullptr;
 QueueHandle_t event_queue = nullptr;
-SemaphoreHandle_t internal_i2c_mutex = nullptr;
 
 portMUX_TYPE cache_mutex = portMUX_INITIALIZER_UNLOCKED;
 rtc_datetime cached_datetime = {};
@@ -187,14 +187,19 @@ void rtc_task(void*)
 
         rtc_datetime result_datetime = request.datetime;
         bool success = false;
-        xSemaphoreTake(internal_i2c_mutex, portMAX_DELAY);
-        if (request.operation == rtc_operation::read) {
-            success = read_hardware_datetime(result_datetime);
-        } else {
-            success = write_hardware_datetime(request.datetime) &&
-                      read_hardware_datetime(result_datetime);
+        {
+            internal_i2c_guard bus_guard(INTERNAL_I2C_RTC_TIMEOUT_MS);
+            if (bus_guard.locked()) {
+                if (request.operation == rtc_operation::read) {
+                    success = read_hardware_datetime(result_datetime);
+                } else {
+                    success = write_hardware_datetime(request.datetime) &&
+                              read_hardware_datetime(result_datetime);
+                }
+            } else {
+                ESP_LOGW(log_tag, "operation skipped; internal I2C bus busy");
+            }
         }
-        xSemaphoreGive(internal_i2c_mutex);
 
         if (success) {
             update_cache(result_datetime);
@@ -216,12 +221,11 @@ bool submit_request(const rtc_request& request)
 
 }  // namespace
 
-bool hal_rtc_start(SemaphoreHandle_t i2c_mutex, TaskHandle_t& task_handle)
+bool hal_rtc_start(TaskHandle_t& task_handle)
 {
     request_queue = xQueueCreate(RTC_REQUEST_QUEUE_LENGTH, sizeof(rtc_request));
     event_queue = xQueueCreate(RTC_EVENT_QUEUE_LENGTH, sizeof(rtc_event));
-    internal_i2c_mutex = i2c_mutex;
-    if (request_queue == nullptr || event_queue == nullptr || internal_i2c_mutex == nullptr) {
+    if (request_queue == nullptr || event_queue == nullptr) {
         return false;
     }
 

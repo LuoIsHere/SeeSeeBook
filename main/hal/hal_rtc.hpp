@@ -4,7 +4,6 @@
 #include <type_traits>
 
 #include <freertos/FreeRTOS.h>
-#include <freertos/semphr.h>
 #include <freertos/task.h>
 
 #define RTC_REQUEST_QUEUE_LENGTH 4U
@@ -45,7 +44,7 @@ static_assert(std::is_trivially_copyable_v<rtc_datetime>);
 static_assert(std::is_trivially_copyable_v<rtc_event>);
 
 // Starts the RTC worker and schedules the initial global clock cache read.
-bool hal_rtc_start(SemaphoreHandle_t i2c_mutex, TaskHandle_t& task_handle);
+bool hal_rtc_start(TaskHandle_t& task_handle);
 
 // Submits one RTC read without blocking the Mooncake scheduler.
 bool hal_submit_rtc_read(std::uint32_t request_id);

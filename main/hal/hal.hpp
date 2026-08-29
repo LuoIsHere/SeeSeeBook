@@ -12,8 +12,8 @@
 // Initializes M5Unified, queues, worker tasks, and the 1 ms GPTimer.
 esp_err_t hal_init();
 
-// Updates M5Unified while serializing access to the shared internal I2C bus.
-void hal_update_m5();
+// Updates M5Unified when the shared internal I2C bus is available.
+bool hal_update_m5();
 
 // Sets the PaperMono front light from the display worker task.
 void hal_set_front_light(std::uint8_t brightness);

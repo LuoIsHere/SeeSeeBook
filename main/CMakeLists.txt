@@ -10,6 +10,7 @@ idf_component_register(
         "hal/hal.cpp"
         "hal/hal_battery.cpp"
         "hal/hal_display.cpp"
+        "hal/hal_internal_i2c.cpp"
         "hal/hal_rtc.cpp"
         "hal/hal_touch.cpp"
         "ui/app_back_button.cpp"

@@ -1,0 +1,14 @@
+idf_component_register(
+    SRCS
+        "battery/battery_service.cpp"
+        "front_light/front_light_service.cpp"
+        "input/input_service.cpp"
+        "rtc/rtc_service.cpp"
+        "storage/storage_service.cpp"
+        "system_tick/system_tick_service.cpp"
+    INCLUDE_DIRS "include/services"
+    REQUIRES
+        core
+        m5_hal
+        esp_driver_gptimer
+)

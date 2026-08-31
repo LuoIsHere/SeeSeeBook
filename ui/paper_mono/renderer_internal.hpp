@@ -23,6 +23,7 @@
 #define DISPLAY_CONTROL_QUEUE_LENGTH 16U
 #define DISPLAY_TASK_STACK_SIZE 12288U
 #define DISPLAY_TASK_PRIORITY 5U
+#define DISPLAY_IDLE_SLEEP_MS 400U
 
 enum class display_update_region : std::uint8_t {
     full,
@@ -36,6 +37,8 @@ enum class display_update_region : std::uint8_t {
 };
 
 struct display_request {
+    std::uint32_t queued_at_ms;
+    std::uint32_t view_generation;
     ui_view_id view;
     refresh_mode mode;
     display_update_region update_region;
@@ -48,6 +51,7 @@ struct display_request {
 };
 
 struct display_control_request {
+    std::uint32_t queued_at_ms;
     ui_control_type control;
     refresh_mode mode;
     display_update_region update_region;

@@ -93,5 +93,8 @@ display_refresh_result hal_display_refresh(
     const display_rect& rect,
     refresh_mode mode);
 
+// Puts the active display backend into its idle low-power state.
+bool hal_display_sleep();
+
 // Applies one front-light level through the shared internal I2C bus.
 bool hal_display_set_front_light(std::uint8_t brightness);

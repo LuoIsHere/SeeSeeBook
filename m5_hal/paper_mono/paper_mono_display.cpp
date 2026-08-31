@@ -42,6 +42,61 @@ bool valid_refresh_rect(const display_rect& rect)
            rect.top + rect.height <= PAPER_MONO_DISPLAY_HEIGHT;
 }
 
+paper_mono::otp_refresh_rect native_refresh_rect(const display_rect& rect)
+{
+    std::uint16_t native_left = 0U;
+    std::uint16_t native_top = 0U;
+    std::uint16_t native_width = 0U;
+    std::uint16_t native_height = 0U;
+
+#if PAPER_MONO_EPD_CANVAS_ROTATION == 5U
+    // Rotation 5 transposes logical coordinates into the native framebuffer.
+    native_left = static_cast<std::uint16_t>(rect.top);
+    native_top = static_cast<std::uint16_t>(rect.left);
+    native_width = static_cast<std::uint16_t>(rect.height);
+    native_height = static_cast<std::uint16_t>(rect.width);
+#elif PAPER_MONO_EPD_CANVAS_ROTATION == 3U
+    native_left = static_cast<std::uint16_t>(rect.top);
+    native_top = static_cast<std::uint16_t>(
+        PAPER_MONO_EPD_NATIVE_HEIGHT - rect.left - rect.width);
+    native_width = static_cast<std::uint16_t>(rect.height);
+    native_height = static_cast<std::uint16_t>(rect.width);
+#else
+#error "PaperMono regional refresh conversion needs the configured canvas rotation"
+#endif
+
+    // SSD1677 RAM is written MSB-first, so the native X interval must contain
+    // complete bytes even when the logical request begins inside one byte.
+    const std::uint16_t aligned_left = native_left & ~0x07U;
+    std::uint16_t aligned_right = static_cast<std::uint16_t>(
+        (native_left + native_width + 7U) & ~0x07U);
+    if (aligned_right > PAPER_MONO_EPD_NATIVE_WIDTH) {
+        aligned_right = PAPER_MONO_EPD_NATIVE_WIDTH;
+    }
+    return {
+        aligned_left,
+        native_top,
+        static_cast<std::uint16_t>(aligned_right - aligned_left),
+        native_height,
+    };
+}
+
+paper_mono::otp_refresh_kind native_refresh_kind(refresh_mode mode)
+{
+    return mode == refresh_mode::quality
+               ? paper_mono::otp_refresh_kind::full_mono
+               : paper_mono::otp_refresh_kind::partial;
+}
+
+refresh_mode logical_refresh_mode(
+    paper_mono::otp_refresh_kind kind,
+    refresh_mode requested_mode)
+{
+    return kind == paper_mono::otp_refresh_kind::full_mono
+               ? refresh_mode::quality
+               : requested_mode;
+}
+
 }  // namespace
 
 std::int16_t display_surface::width() const
@@ -249,33 +304,46 @@ display_refresh_result hal_display_refresh(
         return result;
     }
 
-    const paper_mono::otp_refresh_kind requested_kind =
-        mode == refresh_mode::quality
-            ? paper_mono::otp_refresh_kind::full_mono
-            : paper_mono::otp_refresh_kind::partial;
+    const paper_mono::otp_refresh_rect native_rect = native_refresh_rect(rect);
+    const paper_mono::otp_refresh_kind requested_kind = native_refresh_kind(mode);
     const paper_mono::otp_refresh_result driver_result =
         paper_mono::epd_otp_driver_refresh(
             static_cast<const std::uint8_t*>(frame_canvas.getBuffer()),
             frame_canvas.bufferLength(),
+            native_rect,
             requested_kind);
     result.success = driver_result.success;
-    result.actual_mode =
-        driver_result.actual_kind == paper_mono::otp_refresh_kind::full_mono
-            ? refresh_mode::quality
-            : mode;
+    result.actual_mode = logical_refresh_mode(
+        driver_result.actual_kind,
+        mode);
     result.duration_ms = driver_result.duration_ms;
 
     ESP_LOGI(
         log_tag,
-        "region=%d,%d %dx%d requested=%u actual=%u success=%d",
+        "logical=%d,%d %dx%d native=%u,%u %ux%u requested=%u physical=%s actual=%u success=%d",
         rect.left,
         rect.top,
         rect.width,
         rect.height,
+        static_cast<unsigned>(native_rect.left),
+        static_cast<unsigned>(native_rect.top),
+        static_cast<unsigned>(native_rect.width),
+        static_cast<unsigned>(native_rect.height),
         static_cast<unsigned>(mode),
+        driver_result.actual_kind == paper_mono::otp_refresh_kind::full_mono
+            ? "quality"
+            : "partial_otp",
         static_cast<unsigned>(result.actual_mode),
         result.success);
     return result;
+}
+
+bool hal_display_sleep()
+{
+    if (!display_initialized) {
+        return false;
+    }
+    return paper_mono::epd_otp_driver_sleep();
 }
 
 bool hal_display_set_front_light(std::uint8_t brightness)

@@ -33,6 +33,23 @@ struct input_context {
 QueueHandle_t event_queue = nullptr;
 TaskHandle_t input_task_handle = nullptr;
 
+const char* gesture_name(input_gesture_type gesture)
+{
+    switch (gesture) {
+        case input_gesture_type::press:
+            return "press";
+        case input_gesture_type::click:
+            return "click";
+        case input_gesture_type::long_press_start:
+            return "long_press_start";
+        case input_gesture_type::long_press_repeat:
+            return "long_press_repeat";
+        case input_gesture_type::long_press_end:
+            return "long_press_end";
+    }
+    return "unknown";
+}
+
 void publish_event(
     const input_context& context,
     input_gesture_type gesture,
@@ -51,6 +68,19 @@ void publish_event(
         xQueueReceive(event_queue, &discarded, 0);
         xQueueSend(event_queue, &event, 0);
         ESP_LOGW(log_tag, "event queue full; oldest event discarded");
+    }
+    if (gesture == input_gesture_type::click ||
+        gesture == input_gesture_type::long_press_end) {
+        ESP_LOGI(
+            log_tag,
+            "release gesture=%s start=%d,%d end=%d,%d duration_ms=%lu timestamp_ms=%lu",
+            gesture_name(gesture),
+            event.start_x,
+            event.start_y,
+            event.end_x,
+            event.end_y,
+            static_cast<unsigned long>(event.duration_ms),
+            static_cast<unsigned long>(event.timestamp_ms));
     }
 }
 

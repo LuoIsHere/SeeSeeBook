@@ -92,10 +92,10 @@ void apply_pending_switch()
     if (foreground_record != nullptr) {
         mooncake_runtime.closeApp(foreground_record->mooncake_id);
     }
+    ui_interaction_set_view(view_for(pending_target));
     mooncake_runtime.openApp(target.mooncake_id);
     foreground_record = &target;
     foreground_kind = pending_target;
-    ui_interaction_set_view(view_for(foreground_kind));
     has_pending_switch = false;
     ESP_LOGI(log_tag, "foreground switched target=%s id=%d",
              app_kind_name(foreground_kind), target.mooncake_id);

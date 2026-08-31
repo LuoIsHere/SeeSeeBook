@@ -37,9 +37,10 @@ PaperMono display adapter
 ```
 
 - `epd_otp_transport.*` 只管理 PaperMono EPD 的 SPI2、GPIO、BUSY、M5IOE1
-  供电和复位。SPI 获取、BUSY 等待和内部 I²C 获取都有有限超时。
-- `epd_otp_driver.*` 只管理 SSD1677 命令、OTP 波形、RAM 基线、局刷计数和
-  深睡。
+  供电和复位。显示 SPI 总线按唯一显示所有者模型无限等待；SSD1677 BUSY
+  与内部 I²C 仍使用有限超时，防止硬件异常永久占用其他系统资源。
+- `epd_otp_driver.*` 只管理 SSD1677 命令、官方 OTP 波形、RAM 基线和深睡；
+  不包含 UI 残影策略或 App 状态。
 - `paper_mono_display.cpp` 是设备适配层，负责把设备无关的
   `display_surface` 映射到 1-bit `M5Canvas`，再把逻辑刷新请求交给 OTP
   驱动。
@@ -68,11 +69,21 @@ I²C/Light 实现，仍由现有 HAL 使用。
 模式不会伪造不同物理速度。实际耗时由 HAL 日志记录，应以上板测量为准，
 不能继续套用旧 M5GFX 四灰阶路径的测量值。
 
-每完成 10 次真实 OTP 局刷，HAL 会在下一次刷新请求中强制执行一次
-`quality` 全刷，并通过 `display_refresh_result.actual_mode` 告知 Renderer。
-Renderer 只在硬件刷新成功后累计或清除残影债务。刷新失败时基线会标记为
+HAL 不按次数升级刷新模式。Renderer 按逻辑区域维护独立残影债务：普通区域
+仍按 10 次 `fastest` 产生 1 次逻辑 `fast`、累计 5 次 `fast` 后请求一次
+`quality`；文件文字区域和状态栏使用各自阈值。PaperMono 后端只把这三种
+逻辑局刷统一映射到官方 `Partial OTP (0xFF)`，并执行 Renderer 明确请求的
+`quality`。Renderer 只在硬件刷新成功后累计或清除残影债务。
+
+局刷严格执行“完整当前帧写入 RAM1 → `0x21=0x00` → `0x22=0xFF` →
+Master Activation → 等待 BUSY”的原厂顺序。激活后不再写 RAM2，也不使用
+`0xD4`、`0x1C` 或其他未经该 OTP 示例验证的组合。刷新失败时基线会标记为
 无效，下一次请求必须用全刷重建；UI 只额外执行一次有界的 Quality 恢复，
-不会无限等待或无限重试。
+不会无限重试。
+
+连续交互期间面板最多保持唤醒 400 ms。每次 Partial 都显式写入官方要求的
+`0x3C=0x80`；若面板已经深睡，则先硬件复位并等待 BUSY，若仍处于唤醒状态，
+则只恢复 Partial 边框状态。这避免紧接 Quality 的局刷继承 `0x3C=0x01`。
 
 ## 区域语义
 
@@ -91,8 +102,8 @@ App 或 Renderer 依赖 PaperMono 的控制器 RAM 方向。
 1. 原生 framebuffer 尺寸、bit order、黑白 bit 定义和画布旋转。
 2. 显示总线所有权以及与触摸、SD、RTC、电源总线的关系。
 3. 刷新失败后的基线恢复方式、BUSY 电平及合理超时。
-4. 局刷次数上限、温度范围和厂商建议的全刷清理周期。
+4. 温度范围、区域残影债务和厂商建议的全刷清理周期。
 5. 在真机上检查四角方向、触摸命中一致性、纯白背景、连续按键反馈、状态栏
-   分钟刷新、FileApp 翻页以及第 10 次局刷后的全刷。
+   分钟刷新、FileApp 翻页以及区域债务触发的全刷。
 
 完整编译只能验证类型、依赖和链接，不能替代真机波形与方向测试。

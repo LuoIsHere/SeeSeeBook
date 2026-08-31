@@ -5,6 +5,7 @@
 #include <cstring>
 
 #include <esp_log.h>
+#include <esp_timer.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>
 #include <freertos/task.h>
@@ -14,6 +15,7 @@
 #include "project_info.hpp"
 #include "renderer_internal.hpp"
 #include "status_bar.hpp"
+#include "ui_presentation.hpp"
 
 namespace {
 
@@ -50,6 +52,11 @@ struct ghost_debt {
 display_surface& canvas()
 {
     return hal_display_surface();
+}
+
+std::uint32_t monotonic_ms()
+{
+    return static_cast<std::uint32_t>(esp_timer_get_time() / 1000);
 }
 
 const char* refresh_mode_name(refresh_mode mode)
@@ -868,12 +875,94 @@ display_rect draw_control(
     return {0, 0, 0, 0};
 }
 
+bool queued_not_after(std::uint32_t left, std::uint32_t right)
+{
+    return static_cast<std::int32_t>(right - left) >= 0;
+}
+
+bool control_replaced_by_frame(
+    const display_control_request& control,
+    const display_request& frame)
+{
+    if (!queued_not_after(control.queued_at_ms, frame.queued_at_ms)) {
+        return false;
+    }
+    if (frame.mode == refresh_mode::quality ||
+        frame.update_region == display_update_region::full) {
+        return true;
+    }
+    if (control.control == ui_control_type::rtc_key &&
+        frame.view == ui_view_id::rtc_setting &&
+        frame.update_region == display_update_region::rtc_editor_and_key &&
+        control.index < RTC_KEY_COUNT &&
+        (frame.released_key_mask & (1U << control.index)) != 0U) {
+        return true;
+    }
+    if (control.control == ui_control_type::front_light &&
+        frame.view == ui_view_id::test &&
+        frame.update_region == display_update_region::control) {
+        return true;
+    }
+    const bool file_control =
+        control.control == ui_control_type::file_row ||
+        control.control == ui_control_type::file_previous_page ||
+        control.control == ui_control_type::file_next_page;
+    return file_control && frame.view == ui_view_id::file &&
+           frame.update_region == display_update_region::file_content;
+}
+
+void process_control_request(
+    const display_control_request& control,
+    const display_request& latest,
+    ghost_debt& debt,
+    std::uint8_t selected_light,
+    std::int16_t& pressed_light,
+    status_bar_view_state& displayed_status,
+    bool& status_displayed,
+    bool has_frame)
+{
+    if (!has_frame) {
+        return;
+    }
+    if (control.control == ui_control_type::front_light) {
+        pressed_light = control.pressed ? control.index : no_pressed_button;
+    }
+    display_rect rect =
+        draw_control(control, latest, selected_light, pressed_light);
+    if (rect.width <= 0 || rect.height <= 0) {
+        return;
+    }
+
+    refresh_mode mode = resolve_mode(
+        control.mode,
+        control.update_region,
+        control.allow_quality_cleanup,
+        debt);
+    if (mode == refresh_mode::quality) {
+        draw_full_view(latest, selected_light, pressed_light);
+        displayed_status = status_bar_get_state();
+        draw_status_bar(displayed_status);
+        rect = {0, 0, UI_DISPLAY_WIDTH, UI_DISPLAY_HEIGHT};
+        status_displayed = true;
+    }
+    const std::uint32_t start_ms = monotonic_ms();
+    commit_refresh(debt, rect, mode, control.update_region);
+    ESP_LOGI(
+        log_tag,
+        "stage=control_refresh control=%u pressed=%d queue_wait_ms=%lu duration_ms=%lu",
+        static_cast<unsigned>(control.control),
+        control.pressed,
+        static_cast<unsigned long>(start_ms - control.queued_at_ms),
+        static_cast<unsigned long>(monotonic_ms() - start_ms));
+}
+
 bool submit_request(const display_request& request)
 {
     if (request_queue == nullptr) {
         return false;
     }
     display_request queued = request;
+    queued.queued_at_ms = monotonic_ms();
     if (xQueueSend(request_queue, &queued, 0) != pdTRUE) {
         display_request discarded = {};
         if (xQueueReceive(request_queue, &discarded, 0) != pdTRUE) {
@@ -903,28 +992,13 @@ void renderer_task(void*)
     bool status_displayed = false;
 
     for (;;) {
-        ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
-        display_control_request control = {};
-        while (xQueueReceive(control_queue, &control, 0) == pdTRUE) {
-            if (!has_frame) {
-                continue;
+        if (ulTaskNotifyTake(
+                pdTRUE,
+                pdMS_TO_TICKS(DISPLAY_IDLE_SLEEP_MS)) == 0U) {
+            if (!hal_display_sleep()) {
+                ESP_LOGW(log_tag, "idle display sleep failed");
             }
-            if (control.control == ui_control_type::front_light) {
-                pressed_light = control.pressed ? control.index : no_pressed_button;
-            }
-            display_rect rect = draw_control(control, latest, selected_light, pressed_light);
-            if (rect.width > 0 && rect.height > 0) {
-                refresh_mode mode = resolve_mode(
-                    control.mode, control.update_region, control.allow_quality_cleanup, debt);
-                if (mode == refresh_mode::quality) {
-                    draw_full_view(latest, selected_light, pressed_light);
-                    displayed_status = status_bar_get_state();
-                    draw_status_bar(displayed_status);
-                    rect = {0, 0, UI_DISPLAY_WIDTH, UI_DISPLAY_HEIGHT};
-                    status_displayed = true;
-                }
-                commit_refresh(debt, rect, mode, control.update_region);
-            }
+            continue;
         }
 
         display_request next = {};
@@ -936,11 +1010,34 @@ void renderer_task(void*)
             next = candidate;
             has_request = true;
         }
+
+        display_control_request controls[DISPLAY_CONTROL_QUEUE_LENGTH] = {};
+        std::size_t control_count = 0U;
+        while (control_count < DISPLAY_CONTROL_QUEUE_LENGTH &&
+               xQueueReceive(control_queue, &controls[control_count], 0) == pdTRUE) {
+            ++control_count;
+        }
         if (has_request) {
             if (quality_pending) {
                 next.mode = refresh_mode::quality;
                 next.update_region = display_update_region::full;
             }
+            for (std::size_t index = 0U; index < control_count; ++index) {
+                if (!control_replaced_by_frame(controls[index], next)) {
+                    continue;
+                }
+                if (controls[index].control == ui_control_type::front_light) {
+                    pressed_light = no_pressed_button;
+                }
+                ESP_LOGI(
+                    log_tag,
+                    "discard transient control=%u pressed=%d before frame view=%u",
+                    static_cast<unsigned>(controls[index].control),
+                    controls[index].pressed,
+                    static_cast<unsigned>(next.view));
+                controls[index].control = ui_control_type::none;
+            }
+
             latest = next;
             selected_light = latest.view == ui_view_id::test
                                  ? latest.test.front_light_level
@@ -953,6 +1050,7 @@ void renderer_task(void*)
                 next.allow_quality_cleanup,
                 debt);
             display_rect rect = content_rect(next.update_region);
+            const std::uint32_t draw_start_ms = monotonic_ms();
             if (!has_frame || mode == refresh_mode::quality ||
                 next.update_region == display_update_region::full) {
                 draw_full_view(next, selected_light, pressed_light);
@@ -968,18 +1066,46 @@ void renderer_task(void*)
                 status_displayed = true;
                 rect = merged_rect(rect, status_bar_rect());
             }
+            const std::uint32_t refresh_start_ms = monotonic_ms();
             const display_refresh_result refresh =
                 commit_refresh(debt, rect, mode, next.update_region);
             has_frame = refresh.success;
             status_displayed = refresh.success;
+            if (refresh.success) {
+                ui_presentation_commit_frame(
+                    next.view,
+                    next.view_generation,
+                    next.view == ui_view_id::file ? &next.file : nullptr,
+                    next.view == ui_view_id::rtc_setting &&
+                        rtc_keys_enabled(next.rtc));
+            }
             ESP_LOGI(
                 log_tag,
-                "view refresh requested=%s actual=%s success=%d view=%u region=%u",
+                "stage=view_refresh requested=%s actual=%s success=%d view=%u generation=%lu region=%u queue_wait_ms=%lu draw_ms=%lu refresh_ms=%lu",
                 refresh_mode_name(mode),
                 refresh_mode_name(refresh.actual_mode),
                 refresh.success,
                 static_cast<unsigned>(next.view),
-                static_cast<unsigned>(next.update_region));
+                static_cast<unsigned long>(next.view_generation),
+                static_cast<unsigned>(next.update_region),
+                static_cast<unsigned long>(draw_start_ms - next.queued_at_ms),
+                static_cast<unsigned long>(refresh_start_ms - draw_start_ms),
+                static_cast<unsigned long>(monotonic_ms() - refresh_start_ms));
+        }
+
+        for (std::size_t index = 0U; index < control_count; ++index) {
+            if (controls[index].control == ui_control_type::none) {
+                continue;
+            }
+            process_control_request(
+                controls[index],
+                latest,
+                debt,
+                selected_light,
+                pressed_light,
+                displayed_status,
+                status_displayed,
+                has_frame);
         }
 
         const status_bar_view_state status = status_bar_get_state();
@@ -1001,6 +1127,9 @@ void renderer_task(void*)
 display_request make_request(ui_view_id view, ui_update_reason reason)
 {
     display_request request = {};
+    request.view_generation = ui_presentation_prepare_frame(
+        view,
+        reason == ui_update_reason::view_opened);
     request.view = view;
     request.mode = reason == ui_update_reason::view_opened
                        ? refresh_mode::quality
@@ -1095,6 +1224,7 @@ bool ui_render_control(ui_control_type control, std::uint8_t index, bool pressed
         return false;
     }
     display_control_request request = {};
+    request.queued_at_ms = monotonic_ms();
     request.control = control;
     request.mode = refresh_mode::fastest;
     request.update_region = display_update_region::control;

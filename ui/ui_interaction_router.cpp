@@ -1,10 +1,14 @@
 #include "ui_interaction_router.hpp"
 
+#include <esp_log.h>
+
 #include "layout.hpp"
+#include "ui_presentation.hpp"
 #include "ui_renderer.hpp"
 
 namespace {
 
+constexpr char log_tag[] = "ui_interaction";
 ui_view_id active_view = ui_view_id::menu;
 file_view_state active_file_view = {};
 bool rtc_controls_enabled = false;
@@ -16,6 +20,9 @@ bool control_has_feedback(ui_control_type control)
     switch (control) {
         case ui_control_type::navigate_back:
         case ui_control_type::menu_entry:
+            // Navigation is acknowledged by the destination Quality frame.
+            // Avoid a short inverse refresh immediately before that frame.
+            return false;
         case ui_control_type::front_light:
         case ui_control_type::rtc_key:
         case ui_control_type::file_row:
@@ -153,24 +160,31 @@ void ui_interaction_set_view(ui_view_id view)
         ui_render_control(captured_control, captured_index, false);
     }
     active_view = view;
+    ui_presentation_select_view(view);
     captured_control = ui_control_type::none;
     captured_index = 0U;
-}
-
-void ui_interaction_set_file_view(const file_view_state& state)
-{
-    active_file_view = state;
-}
-
-void ui_interaction_set_rtc_controls_enabled(bool enabled)
-{
-    rtc_controls_enabled = enabled;
 }
 
 bool ui_interaction_process(const input_event& input, ui_action_event& action)
 {
     action = {};
+    if (captured_control == ui_control_type::none &&
+        !ui_presentation_input_ready(active_view)) {
+        if (input.gesture == input_gesture_type::press) {
+            ESP_LOGI(
+                log_tag,
+                "press ignored while view=%u presentation is pending",
+                static_cast<unsigned>(active_view));
+        }
+        return false;
+    }
     if (input.gesture == input_gesture_type::press) {
+        if (active_view == ui_view_id::file &&
+            !ui_presentation_get_file_view(active_file_view)) {
+            return false;
+        }
+        rtc_controls_enabled =
+            ui_presentation_rtc_controls_enabled();
         if (!hit_test(input.start_x, input.start_y, captured_control, captured_index)) {
             return false;
         }

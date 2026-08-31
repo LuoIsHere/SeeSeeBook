@@ -29,6 +29,3 @@
 #define PAPER_MONO_EPD_RESET_LOW_MS 10U
 #define PAPER_MONO_EPD_RESET_HIGH_MS 10U
 #define PAPER_MONO_EPD_DEEP_SLEEP_DELAY_MS 100U
-
-// Run one full monochrome OTP cleanup after this many physical partial updates.
-#define PAPER_MONO_EPD_PARTIAL_REFRESH_LIMIT 10U

@@ -8,7 +8,6 @@
 
 #include "app.hpp"
 #include "system_tick_service.hpp"
-#include "ui_interaction_router.hpp"
 
 namespace {
 
@@ -268,7 +267,6 @@ void file_app::submit_frame(ui_update_reason reason)
 {
     file_view_state view = {};
     build_view(view);
-    ui_interaction_set_file_view(view);
     if (!ui_render_file(view, reason)) {
         ESP_LOGW(log_tag, "renderer queue unavailable");
     }

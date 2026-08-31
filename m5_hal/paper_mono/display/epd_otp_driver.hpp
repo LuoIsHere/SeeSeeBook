@@ -16,6 +16,13 @@ enum class otp_refresh_kind : std::uint8_t {
     full_mono,
 };
 
+struct otp_refresh_rect {
+    std::uint16_t left;
+    std::uint16_t top;
+    std::uint16_t width;
+    std::uint16_t height;
+};
+
 struct otp_refresh_result {
     bool success;
     otp_refresh_kind actual_kind;
@@ -27,10 +34,15 @@ bool epd_otp_driver_init(
     const std::uint8_t* white_frame,
     std::size_t frame_size);
 
-// Sends one complete 1-bit native framebuffer through the OTP refresh path.
+// Refreshes through an official OTP sequence. The rectangle remains semantic
+// metadata until a controller-verified regional transfer sequence is available.
 otp_refresh_result epd_otp_driver_refresh(
     const std::uint8_t* frame,
     std::size_t frame_size,
+    const otp_refresh_rect& rect,
     otp_refresh_kind requested_kind);
+
+// Puts an idle panel into deep sleep. Repeated calls are harmless.
+bool epd_otp_driver_sleep();
 
 }  // namespace paper_mono

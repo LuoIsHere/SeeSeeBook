@@ -7,7 +7,6 @@
 
 #include "app.hpp"
 #include "rtc_service.hpp"
-#include "ui_interaction_router.hpp"
 
 namespace {
 
@@ -165,8 +164,6 @@ rtc_view_state rtc_setting_app::build_view() const
 
 void rtc_setting_app::submit_frame(ui_update_reason reason, std::int8_t released_key_index)
 {
-    ui_interaction_set_rtc_controls_enabled(
-        state_.rtc_available && !state_.loading && !state_.saving);
     ui_render_rtc(
         build_view(), reason,
         released_key_index >= 0 ? ui_control_type::rtc_key : ui_control_type::none,

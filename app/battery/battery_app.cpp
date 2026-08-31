@@ -72,7 +72,7 @@ void battery_app::on_close()
     ESP_LOGI(log_tag, "BatteryApp session cleared");
 }
 
-void battery_app::handle_battery_event(const battery_service_event& event)
+void battery_app::handle_battery_event(const app_battery_event& event)
 {
     const bool should_refresh = !has_snapshot_ || visible_change(snapshot_, event.snapshot);
     snapshot_ = event.snapshot;

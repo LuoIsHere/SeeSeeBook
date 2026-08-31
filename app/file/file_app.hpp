@@ -34,8 +34,8 @@ private:
     bool popup_visible_ = false;
 
     void handle_action(const ui_action_event& action);
-    void handle_storage_status(const storage_status_event& event);
-    void handle_directory_result(const storage_result_event& event);
+    void handle_storage_status(const app_storage_status_event& event);
+    void handle_directory_result(const app_storage_result_event& event);
     void request_directory(const std::string& path);
     void activate_row(std::uint8_t row_index);
     void release_directory_result();

@@ -18,6 +18,6 @@ private:
     battery_snapshot snapshot_ = {};
     bool has_snapshot_ = false;
 
-    void handle_battery_event(const battery_service_event& event);
+    void handle_battery_event(const app_battery_event& event);
     void update_view();
 };

@@ -7,7 +7,6 @@
 #include <esp_err.h>
 
 #include "result_handle.hpp"
-#include "service_event.hpp"
 #include "storage_state.hpp"
 
 #define STORAGE_RESULT_POOL_SIZE 4U
@@ -49,17 +48,16 @@ struct storage_directory_result {
 esp_err_t storage_service_init();
 storage_state storage_service_get_state();
 std::uint32_t storage_service_get_media_generation();
-bool storage_service_try_get_status_event(storage_status_event& event);
 
 bool storage_service_list_directory(
     const char* path,
     std::uint32_t request_id,
     std::uint32_t session_id);
-bool storage_service_try_get_result_event(storage_result_event& event);
 
 // Resolve returns task-local access only; the pointer must never enter a queue.
 bool storage_service_resolve_result(
     const result_handle& handle,
     const storage_directory_result*& result);
 bool storage_service_retain_result(const result_handle& handle);
-void storage_service_release_result(result_handle& handle);
+// Release is non-blocking and never depends on the result-pool mutex.
+bool storage_service_release_result(result_handle& handle);

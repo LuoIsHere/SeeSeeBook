@@ -5,7 +5,7 @@
 
 struct result_handle {
     std::uint16_t index;
-    std::uint16_t generation;
+    std::uint32_t generation;
 };
 
 constexpr result_handle invalid_result_handle()

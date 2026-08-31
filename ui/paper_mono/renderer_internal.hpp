@@ -10,12 +10,10 @@
 #include "test_view.hpp"
 #include "ui_action.hpp"
 
-#define CONTROL_GHOST_DEBT_LIMIT 20U
-#define RTC_EDITOR_GHOST_DEBT_LIMIT 12U
+#define FASTEST_REFRESHES_BEFORE_FAST 10U
+#define FAST_REFRESHES_BEFORE_QUALITY 5U
+#define FILE_TEXT_REFRESHES_BEFORE_QUALITY 20U
 #define STATUS_BAR_GHOST_DEBT_LIMIT 60U
-#define TEST_CONTENT_GHOST_DEBT_LIMIT 10U
-#define BATTERY_CONTENT_GHOST_DEBT_LIMIT 10U
-#define FILE_CONTENT_GHOST_DEBT_LIMIT 10U
 
 #define FRONT_LIGHT_BAR_HEIGHT 72U
 #define FRONT_LIGHT_LEVEL_COUNT 5U
@@ -45,7 +43,6 @@ struct display_request {
     rtc_view_state rtc;
     battery_view_state battery;
     file_view_state file;
-    std::uint32_t minimum_refresh_interval_ms;
     std::uint16_t released_key_mask;
     bool allow_quality_cleanup;
 };

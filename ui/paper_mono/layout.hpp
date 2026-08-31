@@ -8,6 +8,9 @@
 #include "renderer_internal.hpp"
 #include "rtc_view.hpp"
 
+#define UI_DISPLAY_WIDTH 480
+#define UI_DISPLAY_HEIGHT 800
+
 #define MENU_SCREEN_EDGE_MARGIN 32
 #define MENU_TITLE_CENTER_Y 96
 #define MENU_TITLE_TEXT_SIZE 4U
@@ -74,7 +77,7 @@
 #define FILE_CONTENT_REGION_HEIGHT (STATUS_BAR_TOP - FILE_CONTENT_REGION_TOP)
 #define FILE_LIST_TOP 152
 #define FILE_ROW_LEFT 24
-#define FILE_ROW_WIDTH (PAPER_MONO_PORTRAIT_WIDTH - FILE_ROW_LEFT * 2)
+#define FILE_ROW_WIDTH (UI_DISPLAY_WIDTH - FILE_ROW_LEFT * 2)
 #define FILE_ROW_HEIGHT 60
 #define FILE_ROW_COUNT 8U
 #define FILE_ROW_TEXT_SIZE 1U
@@ -111,9 +114,9 @@ constexpr bool ui_point_in_rect(std::int16_t x, std::int16_t y, const display_re
 constexpr display_rect front_light_button_rect(std::uint8_t index)
 {
     const std::int16_t left = static_cast<std::int16_t>(
-        PAPER_MONO_PORTRAIT_WIDTH * index / FRONT_LIGHT_LEVEL_COUNT);
+        UI_DISPLAY_WIDTH * index / FRONT_LIGHT_LEVEL_COUNT);
     const std::int16_t right = static_cast<std::int16_t>(
-        PAPER_MONO_PORTRAIT_WIDTH * (index + 1U) / FRONT_LIGHT_LEVEL_COUNT);
+        UI_DISPLAY_WIDTH * (index + 1U) / FRONT_LIGHT_LEVEL_COUNT);
     return {left, 0, static_cast<std::int16_t>(right - left), FRONT_LIGHT_BAR_HEIGHT};
 }
 
@@ -122,7 +125,7 @@ constexpr display_rect menu_entry_rect(std::uint8_t index)
     return {
         MENU_SCREEN_EDGE_MARGIN,
         static_cast<std::int16_t>(MENU_ENTRY_TOP + index * MENU_ENTRY_HEIGHT),
-        static_cast<std::int16_t>(PAPER_MONO_PORTRAIT_WIDTH - MENU_SCREEN_EDGE_MARGIN * 2),
+        static_cast<std::int16_t>(UI_DISPLAY_WIDTH - MENU_SCREEN_EDGE_MARGIN * 2),
         MENU_ENTRY_HEIGHT,
     };
 }
@@ -208,7 +211,7 @@ constexpr display_rect file_next_page_rect()
 {
     return {
         static_cast<std::int16_t>(
-            PAPER_MONO_PORTRAIT_WIDTH - FILE_ROW_LEFT - FILE_PAGE_BUTTON_WIDTH),
+            UI_DISPLAY_WIDTH - FILE_ROW_LEFT - FILE_PAGE_BUTTON_WIDTH),
         FILE_PAGINATION_TOP,
         FILE_PAGE_BUTTON_WIDTH,
         FILE_PAGINATION_HEIGHT,
@@ -220,7 +223,7 @@ constexpr display_rect status_bar_rect()
     return {
         0,
         STATUS_BAR_TOP,
-        PAPER_MONO_PORTRAIT_WIDTH,
+        UI_DISPLAY_WIDTH,
         STATUS_BAR_HEIGHT,
     };
 }

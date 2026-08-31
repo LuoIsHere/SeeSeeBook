@@ -1,5 +1,7 @@
 #include "battery_service.hpp"
 
+#include "service_event_source.hpp"
+
 #include <atomic>
 
 #include <esp_log.h>
@@ -50,8 +52,21 @@ bool update_vbus_state(
     if (!initialized) {
         initialized = true;
         previous_present = present;
-        snapshot.charging = false;
-        snapshot.charging_valid = !present;
+        changed = true;
+        if (!present) {
+            snapshot.charging = false;
+            snapshot.charging_valid = true;
+        } else {
+            bool charging = false;
+            snapshot.charging_valid = hal_battery_read_charging(charging);
+            snapshot.charging = snapshot.charging_valid && charging;
+        }
+        ESP_LOGI(
+            log_tag,
+            "VBUS initialized present=%u charging=%u valid=%u",
+            present ? 1U : 0U,
+            snapshot.charging ? 1U : 0U,
+            snapshot.charging_valid ? 1U : 0U);
         return true;
     }
     if (present == previous_present) {

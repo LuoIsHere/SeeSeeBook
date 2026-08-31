@@ -6,6 +6,7 @@
 
 #include "display.hpp"
 #include "internal_i2c.hpp"
+#include "paper_mono_config.hpp"
 #include "storage.hpp"
 
 namespace {
@@ -32,6 +33,11 @@ esp_err_t hal_init()
     M5.begin(m5_config);
 
     ESP_RETURN_ON_FALSE(
+        M5.getBoard() == m5::board_t::board_M5PaperMono,
+        ESP_ERR_NOT_SUPPORTED,
+        log_tag,
+        "unsupported board for PaperMono HAL");
+    ESP_RETURN_ON_FALSE(
         M5.Display.isEPD(),
         ESP_ERR_NOT_FOUND,
         log_tag,
@@ -43,7 +49,7 @@ esp_err_t hal_init()
         "PaperMono touch not found");
     ESP_RETURN_ON_FALSE(
         hal_display_init(),
-        ESP_ERR_INVALID_SIZE,
+        ESP_FAIL,
         log_tag,
         "initialize display");
     ESP_RETURN_ON_FALSE(
@@ -56,7 +62,7 @@ esp_err_t hal_init()
         log_tag,
         "board=%d display=%dx%d",
         static_cast<int>(M5.getBoard()),
-        M5.Display.width(),
-        M5.Display.height());
+        PAPER_MONO_DISPLAY_WIDTH,
+        PAPER_MONO_DISPLAY_HEIGHT);
     return ESP_OK;
 }

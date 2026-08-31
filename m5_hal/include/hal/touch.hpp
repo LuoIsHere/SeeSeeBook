@@ -8,5 +8,5 @@ struct touch_sample {
     bool pressed;
 };
 
-// Reads one sample and converts PaperMono touch coordinates to portrait coordinates.
+// Reads one sample and converts hardware coordinates to logical display coordinates.
 bool hal_touch_sample(touch_sample& sample);

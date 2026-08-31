@@ -29,8 +29,9 @@ void test_app::handle_app_event(const app_event& event)
         if (action.control == ui_control_type::front_light) {
             if (front_light_service_set_level(action.index)) {
                 view_.front_light_level = action.index;
-                ui_render_test(view_, ui_update_reason::selection_changed);
             }
+            // Always redraw the bar so release feedback is restored on HAL failure.
+            ui_render_test(view_, ui_update_reason::selection_changed);
             return;
         }
         if (action.control == ui_control_type::test_surface) {

@@ -36,7 +36,7 @@ private:
     rtc_view_state build_view() const;
     void submit_frame(ui_update_reason reason, std::int8_t released_key_index = -1);
     void handle_action(const ui_action_event& action);
-    void handle_rtc_event(const rtc_service_event& event);
+    void handle_rtc_event(const app_rtc_event& event);
     void handle_key(std::uint8_t key_index);
     void input_digit(std::uint8_t digit, std::int8_t released_key_index);
     void clear_selected_field(std::int8_t released_key_index);

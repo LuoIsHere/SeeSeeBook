@@ -20,10 +20,10 @@ struct hal_storage_entry {
 
 static_assert(std::is_trivially_copyable_v<hal_storage_entry>);
 
-// Configures PaperMono SD power and card-detect pins.
+// Configures storage power and card-detect pins.
 bool hal_storage_init();
 
-// Reads the raw card-insertion state after PaperMono polarity normalization.
+// Reads card insertion after board-specific active-level normalization.
 bool hal_storage_card_inserted(bool& inserted);
 
 esp_err_t hal_storage_mount();

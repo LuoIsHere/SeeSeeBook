@@ -1,5 +1,7 @@
 #include "storage_service.hpp"
 
+#include "service_event_source.hpp"
+
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -28,6 +30,8 @@ constexpr UBaseType_t worker_priority = 4U;
 constexpr UBaseType_t monitor_priority = 5U;
 constexpr std::uint8_t stable_sample_count = 3U;
 constexpr std::uint32_t pool_lock_timeout_ms = 20U;
+constexpr std::uint32_t reference_count_mask = 0xffffU;
+constexpr std::uint32_t cleanup_pending_flag = 1U << 16U;
 
 struct storage_request {
     std::uint32_t request_id;
@@ -37,9 +41,9 @@ struct storage_request {
 };
 
 struct result_slot {
-    std::uint16_t generation = 0U;
-    std::uint16_t reference_count = 0U;
-    bool filling = false;
+    std::atomic_uint32_t generation{0U};
+    std::atomic_uint32_t reference_state{0U};
+    std::atomic_bool filling{false};
     storage_directory_result result;
 };
 
@@ -120,17 +124,25 @@ result_handle acquire_result_slot()
     result_handle handle = invalid_result_handle();
     for (std::uint16_t index = 0U; index < result_pool.size(); ++index) {
         result_slot& slot = result_pool[index];
-        if (slot.reference_count != 0U || slot.filling) {
+        std::uint32_t reference_state = slot.reference_state.load();
+        if (reference_state == cleanup_pending_flag) {
+            slot.result = {};
+            slot.filling.store(false);
+            slot.reference_state.store(0U);
+            reference_state = 0U;
+        }
+        if (reference_state != 0U || slot.filling.load()) {
             continue;
         }
-        ++slot.generation;
-        if (slot.generation == 0U) {
-            ++slot.generation;
+        std::uint32_t generation = slot.generation.load() + 1U;
+        if (generation == 0U) {
+            generation = 1U;
         }
-        slot.reference_count = 1U;
-        slot.filling = true;
+        slot.generation.store(generation);
         slot.result = {};
-        handle = {index, slot.generation};
+        slot.filling.store(true);
+        slot.reference_state.store(1U);
+        handle = {index, generation};
         break;
     }
     xSemaphoreGive(result_pool_mutex);
@@ -143,23 +155,24 @@ storage_directory_result* mutable_result(const result_handle& handle)
         return nullptr;
     }
     result_slot& slot = result_pool[handle.index];
-    return slot.generation == handle.generation && slot.reference_count > 0U
+    return slot.generation.load() == handle.generation &&
+                   (slot.reference_state.load() & reference_count_mask) > 0U
                ? &slot.result
                : nullptr;
 }
 
 bool finish_result(const result_handle& handle)
 {
-    if (!lock_result_pool()) {
+    if (!result_handle_is_valid(handle) || handle.index >= result_pool.size()) {
         return false;
     }
     result_slot& slot = result_pool[handle.index];
-    const bool valid = slot.generation == handle.generation &&
-                       slot.reference_count > 0U && slot.filling;
+    const bool valid = slot.generation.load() == handle.generation &&
+                       (slot.reference_state.load() & reference_count_mask) > 0U &&
+                       slot.filling.load();
     if (valid) {
-        slot.filling = false;
+        slot.filling.store(false);
     }
-    xSemaphoreGive(result_pool_mutex);
     return valid;
 }
 
@@ -407,55 +420,87 @@ bool storage_service_resolve_result(
     const storage_directory_result*& result)
 {
     result = nullptr;
-    if (!result_handle_is_valid(handle) || handle.index >= result_pool.size() ||
-        !lock_result_pool()) {
+    if (!result_handle_is_valid(handle) || handle.index >= result_pool.size()) {
         return false;
     }
     const result_slot& slot = result_pool[handle.index];
-    const bool valid = slot.generation == handle.generation &&
-                       slot.reference_count > 0U && !slot.filling;
+    // The caller already owns one reference, so the result remains stable while
+    // the returned task-local pointer is being used.
+    const bool valid = slot.generation.load() == handle.generation &&
+                       (slot.reference_state.load() & reference_count_mask) > 0U &&
+                       !slot.filling.load();
     if (valid) {
         result = &slot.result;
     }
-    xSemaphoreGive(result_pool_mutex);
     return valid;
 }
 
 bool storage_service_retain_result(const result_handle& handle)
 {
-    if (!result_handle_is_valid(handle) || handle.index >= result_pool.size() ||
-        !lock_result_pool()) {
+    if (!result_handle_is_valid(handle) || handle.index >= result_pool.size()) {
         return false;
     }
     result_slot& slot = result_pool[handle.index];
-    const bool valid = slot.generation == handle.generation &&
-                       slot.reference_count > 0U && !slot.filling &&
-                       slot.reference_count < UINT16_MAX;
-    if (valid) {
-        ++slot.reference_count;
+    if (slot.generation.load() != handle.generation || slot.filling.load()) {
+        return false;
     }
-    xSemaphoreGive(result_pool_mutex);
-    return valid;
-}
-
-void storage_service_release_result(result_handle& handle)
-{
-    if (!result_handle_is_valid(handle) || handle.index >= result_pool.size()) {
-        handle = invalid_result_handle();
-        return;
-    }
-    if (!lock_result_pool()) {
-        // Preserve ownership so the caller can retry instead of leaking a slot.
-        return;
-    }
-    result_slot& slot = result_pool[handle.index];
-    if (slot.generation == handle.generation && slot.reference_count > 0U) {
-        --slot.reference_count;
-        if (slot.reference_count == 0U) {
-            slot.filling = false;
-            slot.result = {};
+    std::uint32_t state = slot.reference_state.load();
+    for (;;) {
+        const std::uint32_t references = state & reference_count_mask;
+        if ((state & cleanup_pending_flag) != 0U || references == 0U ||
+            references >= reference_count_mask) {
+            return false;
+        }
+        if (slot.reference_state.compare_exchange_weak(state, state + 1U)) {
+            return true;
         }
     }
-    xSemaphoreGive(result_pool_mutex);
-    handle = invalid_result_handle();
+}
+
+bool storage_service_release_result(result_handle& handle)
+{
+    if (!result_handle_is_valid(handle)) {
+        handle = invalid_result_handle();
+        return true;
+    }
+    const result_handle requested = handle;
+    if (handle.index >= result_pool.size()) {
+        handle = invalid_result_handle();
+        ESP_LOGW(
+            log_tag,
+            "release rejected index=%u generation=%lu",
+            static_cast<unsigned>(requested.index),
+            static_cast<unsigned long>(requested.generation));
+        return false;
+    }
+    result_slot& slot = result_pool[handle.index];
+    if (slot.generation.load() != handle.generation) {
+        handle = invalid_result_handle();
+        ESP_LOGW(
+            log_tag,
+            "release rejected stale handle=%u:%lu",
+            static_cast<unsigned>(requested.index),
+            static_cast<unsigned long>(requested.generation));
+        return false;
+    }
+    std::uint32_t state = slot.reference_state.load();
+    for (;;) {
+        const std::uint32_t references = state & reference_count_mask;
+        if ((state & cleanup_pending_flag) != 0U || references == 0U) {
+            handle = invalid_result_handle();
+            ESP_LOGW(
+                log_tag,
+                "release rejected unowned handle=%u:%lu state=0x%lx",
+                static_cast<unsigned>(requested.index),
+                static_cast<unsigned long>(requested.generation),
+                static_cast<unsigned long>(state));
+            return false;
+        }
+        const std::uint32_t next_state =
+            references == 1U ? cleanup_pending_flag : state - 1U;
+        if (slot.reference_state.compare_exchange_weak(state, next_state)) {
+            handle = invalid_result_handle();
+            return true;
+        }
+    }
 }

@@ -1,5 +1,7 @@
 #include "rtc_service.hpp"
 
+#include "service_event_source.hpp"
+
 #include <esp_log.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>

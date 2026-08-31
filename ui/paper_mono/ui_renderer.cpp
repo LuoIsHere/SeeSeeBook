@@ -34,6 +34,7 @@ TaskHandle_t renderer_task_handle = nullptr;
 struct region_ghost_debt {
     std::uint8_t fastest_count = 0U;
     std::uint8_t fast_count = 0U;
+    std::uint8_t text_count = 0U;
 };
 
 struct ghost_debt {
@@ -43,11 +44,12 @@ struct ghost_debt {
     region_ghost_debt test_content;
     region_ghost_debt battery_content;
     region_ghost_debt file_content;
+    bool status_cleanup_pending = false;
 };
 
-M5GFX& canvas()
+display_surface& canvas()
 {
-    return hal_display_canvas();
+    return hal_display_surface();
 }
 
 const char* refresh_mode_name(refresh_mode mode)
@@ -55,6 +57,8 @@ const char* refresh_mode_name(refresh_mode mode)
     switch (mode) {
         case refresh_mode::fastest:
             return "fastest";
+        case refresh_mode::text:
+            return "text";
         case refresh_mode::fast:
             return "fast";
         case refresh_mode::quality:
@@ -97,11 +101,17 @@ refresh_mode resolve_mode(
     }
     const region_ghost_debt& value = debt_for_region(debt, region);
     if (requested == refresh_mode::fastest &&
-        value.fastest_count + 1U >= 10U) {
-        return value.fast_count + 1U >= 5U ? refresh_mode::quality
-                                           : refresh_mode::fast;
+        value.fastest_count + 1U >= FASTEST_REFRESHES_BEFORE_FAST) {
+        return value.fast_count + 1U >= FAST_REFRESHES_BEFORE_QUALITY
+                   ? refresh_mode::quality
+                   : refresh_mode::fast;
     }
-    if (requested == refresh_mode::fast && value.fast_count + 1U >= 5U) {
+    if (requested == refresh_mode::fast &&
+        value.fast_count + 1U >= FAST_REFRESHES_BEFORE_QUALITY) {
+        return refresh_mode::quality;
+    }
+    if (requested == refresh_mode::text &&
+        value.text_count + 1U >= FILE_TEXT_REFRESHES_BEFORE_QUALITY) {
         return refresh_mode::quality;
     }
     return requested;
@@ -113,30 +123,66 @@ void record_refresh(
     display_update_region region)
 {
     if (mode == refresh_mode::quality) {
-        // A full quality frame cleans every application-owned region. The status bar
-        // keeps an independent counter because it is always refreshed with fastest.
-        const std::uint16_t status_debt = debt.status_bar;
+        // Every quality request is rendered as a full frame and cleans all regions.
         debt = {};
-        debt.status_bar = status_debt;
         return;
     }
     if (region == display_update_region::status_bar) {
         if (debt.status_bar < UINT16_MAX) {
             ++debt.status_bar;
         }
+        if (debt.status_bar >= STATUS_BAR_GHOST_DEBT_LIMIT) {
+            debt.status_cleanup_pending = true;
+        }
         return;
     }
     region_ghost_debt& value = debt_for_region(debt, region);
     if (mode == refresh_mode::fastest) {
-        if (value.fastest_count < 10U) {
+        if (value.fastest_count < FASTEST_REFRESHES_BEFORE_FAST) {
             ++value.fastest_count;
         }
     } else if (mode == refresh_mode::fast) {
         value.fastest_count = 0U;
-        if (value.fast_count < 5U) {
+        if (value.fast_count < FAST_REFRESHES_BEFORE_QUALITY) {
             ++value.fast_count;
         }
+    } else if (mode == refresh_mode::text && value.text_count < UINT8_MAX) {
+        ++value.text_count;
     }
+}
+
+display_refresh_result commit_refresh(
+    ghost_debt& debt,
+    const display_rect& rect,
+    refresh_mode requested_mode,
+    display_update_region region)
+{
+    display_refresh_result result = hal_display_refresh(rect, requested_mode);
+    if (!result.success) {
+        // Retry once with a full monochrome cycle. The HAL marks an uncertain
+        // differential baseline invalid after every failed activation.
+        ESP_LOGW(
+            log_tag,
+            "refresh failed mode=%s; attempting one quality recovery",
+            refresh_mode_name(requested_mode));
+        result = hal_display_refresh(
+            {0, 0, UI_DISPLAY_WIDTH, UI_DISPLAY_HEIGHT},
+            refresh_mode::quality);
+    }
+    if (result.success) {
+        record_refresh(debt, result.actual_mode, region);
+        if (result.actual_mode != requested_mode) {
+            ESP_LOGI(
+                log_tag,
+                "HAL upgraded refresh requested=%s actual=%s duration=%lu",
+                refresh_mode_name(requested_mode),
+                refresh_mode_name(result.actual_mode),
+                static_cast<unsigned long>(result.duration_ms));
+        }
+    } else {
+        ESP_LOGE(log_tag, "display refresh and bounded recovery both failed");
+    }
+    return result;
 }
 
 display_rect merged_rect(const display_rect& first, const display_rect& second)
@@ -170,17 +216,28 @@ bool status_states_equal(
 
 void draw_centered_line(const char* text, std::int32_t y, std::uint8_t size)
 {
-    canvas().setTextDatum(textdatum_t::middle_center);
-    canvas().setTextSize(size);
-    canvas().drawString(text, canvas().width() / 2, y);
+    canvas().set_text_alignment(display_text_alignment::middle_center);
+    canvas().set_text_size(size);
+    canvas().draw_text(text, canvas().width() / 2, y);
+}
+
+void draw_action_background(
+    const display_rect& rect,
+    bool pressed,
+    bool enabled)
+{
+    const display_color color = pressed && enabled
+                                    ? display_color::black
+                                    : display_color::white;
+    canvas().fill_rect(rect, color);
 }
 
 void draw_status_bar(const status_bar_view_state& state)
 {
     const display_rect rect = status_bar_rect();
-    canvas().fillRect(rect.left, rect.top, rect.width, rect.height, TFT_WHITE);
-    canvas().setTextColor(TFT_BLACK, TFT_WHITE);
-    canvas().setTextSize(STATUS_BAR_TEXT_SIZE);
+    canvas().fill_rect(rect, display_color::white);
+    canvas().set_text_color(display_color::black, display_color::white);
+    canvas().set_text_size(STATUS_BAR_TEXT_SIZE);
 
     char buffer[12] = {};
     if (state.time_valid) {
@@ -188,46 +245,56 @@ void draw_status_bar(const status_bar_view_state& state)
     } else {
         std::snprintf(buffer, sizeof(buffer), "--:--");
     }
-    canvas().setTextDatum(textdatum_t::middle_left);
-    canvas().drawString(buffer, STATUS_BAR_LEFT_MARGIN, STATUS_BAR_TOP + STATUS_BAR_HEIGHT / 2);
+    canvas().set_text_alignment(display_text_alignment::middle_left);
+    canvas().draw_text(buffer, STATUS_BAR_LEFT_MARGIN, STATUS_BAR_TOP + STATUS_BAR_HEIGHT / 2);
 
     if (state.battery.level_valid) {
         std::snprintf(buffer, sizeof(buffer), "%u%%", state.battery.percent);
     } else {
         std::snprintf(buffer, sizeof(buffer), "--%%");
     }
-    const std::int16_t percent_right = PAPER_MONO_PORTRAIT_WIDTH - STATUS_BAR_RIGHT_MARGIN;
-    canvas().setTextDatum(textdatum_t::middle_right);
-    canvas().drawString(buffer, percent_right, STATUS_BAR_TOP + STATUS_BAR_HEIGHT / 2);
+    const std::int16_t percent_right = UI_DISPLAY_WIDTH - STATUS_BAR_RIGHT_MARGIN;
+    canvas().set_text_alignment(display_text_alignment::middle_right);
+    canvas().draw_text(buffer, percent_right, STATUS_BAR_TOP + STATUS_BAR_HEIGHT / 2);
     if (state.battery.charging_valid && state.battery.charging) {
         const std::int16_t left = percent_right - STATUS_BATTERY_PERCENT_MAX_WIDTH - 30;
         const std::int16_t top = STATUS_BAR_TOP + 5;
-        canvas().fillTriangle(left + 16, top, left + 5, top + 18, left + 14, top + 18, TFT_BLACK);
-        canvas().fillTriangle(
-            left + 13, top + 13, left + 24, top + 13, left + 10, top + 30, TFT_BLACK);
+        canvas().fill_triangle(
+            left + 16, top, left + 5, top + 18, left + 14, top + 18,
+            display_color::black);
+        canvas().fill_triangle(
+            left + 13, top + 13, left + 24, top + 13, left + 10, top + 30,
+            display_color::black);
     }
 }
 
 void draw_front_light_bar(std::uint8_t selected, std::int16_t pressed)
 {
-    canvas().fillRect(0, 0, canvas().width(), FRONT_LIGHT_BAR_HEIGHT, TFT_WHITE);
-    canvas().setTextDatum(textdatum_t::middle_center);
-    canvas().setTextSize(2U);
+    canvas().fill_rect(
+        0, 0, canvas().width(), FRONT_LIGHT_BAR_HEIGHT, display_color::white);
+    canvas().set_text_alignment(display_text_alignment::middle_center);
+    canvas().set_text_size(2U);
     for (std::uint8_t index = 0U; index < FRONT_LIGHT_LEVEL_COUNT; ++index) {
         const display_rect rect = front_light_button_rect(index);
         const bool is_pressed = pressed == static_cast<std::int16_t>(index);
-        canvas().fillRect(
-            rect.left, rect.top, rect.width, rect.height, is_pressed ? TFT_BLACK : TFT_WHITE);
+        canvas().fill_rect(
+            rect,
+            is_pressed ? display_color::black : display_color::white);
         if (!is_pressed) {
-            canvas().drawRect(rect.left, rect.top, rect.width, rect.height, TFT_BLACK);
+            canvas().draw_rect(rect, display_color::black);
             if (selected == index) {
-                canvas().drawRect(
-                    rect.left + 3, rect.top + 3, rect.width - 6, rect.height - 6, TFT_BLACK);
+                canvas().draw_rect(
+                    rect.left + 3,
+                    rect.top + 3,
+                    rect.width - 6,
+                    rect.height - 6,
+                    display_color::black);
             }
         }
-        canvas().setTextColor(is_pressed ? TFT_WHITE : TFT_BLACK,
-                              is_pressed ? TFT_BLACK : TFT_WHITE);
-        canvas().drawString(
+        canvas().set_text_color(
+            is_pressed ? display_color::white : display_color::black,
+            is_pressed ? display_color::black : display_color::white);
+        canvas().draw_text(
             front_light_labels[index], rect.left + rect.width / 2, rect.top + rect.height / 2);
     }
 }
@@ -238,15 +305,30 @@ void draw_menu_entry(std::uint8_t index, bool pressed)
         return;
     }
     const display_rect rect = menu_entry_rect(index);
-    const std::uint32_t background = pressed ? TFT_BLACK : TFT_WHITE;
-    const std::uint32_t foreground = pressed ? TFT_WHITE : TFT_BLACK;
-    canvas().fillRect(rect.left, rect.top, rect.width, rect.height, background);
-    canvas().drawFastHLine(rect.left, rect.top, rect.width, TFT_BLACK);
-    canvas().drawFastHLine(rect.left, rect.top + rect.height - 1, rect.width, TFT_BLACK);
-    canvas().setTextColor(foreground, background);
-    canvas().setTextDatum(textdatum_t::middle_center);
-    canvas().setTextSize(MENU_ENTRY_TEXT_SIZE);
-    canvas().drawString(menu_entry_labels[index], rect.left + rect.width / 2, rect.top + rect.height / 2);
+    const display_color background =
+        pressed ? display_color::black : display_color::white;
+    const display_color foreground =
+        pressed ? display_color::white : display_color::black;
+    canvas().fill_rect(rect, background);
+    if (index == 0U) {
+        canvas().draw_horizontal_line(
+            rect.left,
+            rect.top,
+            rect.width,
+            display_color::black);
+    }
+    canvas().draw_horizontal_line(
+        rect.left,
+        rect.top + rect.height - 1,
+        rect.width,
+        display_color::black);
+    canvas().set_text_color(foreground, background);
+    canvas().set_text_alignment(display_text_alignment::middle_center);
+    canvas().set_text_size(MENU_ENTRY_TEXT_SIZE);
+    canvas().draw_text(
+        menu_entry_labels[index],
+        rect.left + rect.width / 2,
+        rect.top + rect.height / 2);
 }
 
 display_rect back_button_rect(ui_view_id view)
@@ -269,14 +351,16 @@ display_rect back_button_rect(ui_view_id view)
 void draw_back_button(ui_view_id view, bool pressed)
 {
     const display_rect rect = back_button_rect(view);
-    const std::uint32_t background = pressed ? TFT_BLACK : TFT_WHITE;
-    const std::uint32_t foreground = pressed ? TFT_WHITE : TFT_BLACK;
-    canvas().fillRect(rect.left, rect.top, rect.width, rect.height, background);
-    canvas().drawRect(rect.left, rect.top, rect.width, rect.height, TFT_BLACK);
-    canvas().setTextColor(foreground, background);
-    canvas().setTextDatum(textdatum_t::middle_center);
-    canvas().setTextSize(APP_BACK_BUTTON_TEXT_SIZE);
-    canvas().drawString("< Back", rect.left + rect.width / 2, rect.top + rect.height / 2);
+    const display_color background =
+        pressed ? display_color::black : display_color::white;
+    const display_color foreground =
+        pressed ? display_color::white : display_color::black;
+    canvas().fill_rect(rect, background);
+    canvas().draw_rect(rect, display_color::black);
+    canvas().set_text_color(foreground, background);
+    canvas().set_text_alignment(display_text_alignment::middle_center);
+    canvas().set_text_size(APP_BACK_BUTTON_TEXT_SIZE);
+    canvas().draw_text("< Back", rect.left + rect.width / 2, rect.top + rect.height / 2);
 }
 
 const char* rtc_message_text(const rtc_view_state& state)
@@ -352,18 +436,25 @@ void draw_rtc_field(const rtc_view_state& state, rtc_edit_field field)
     }
     const display_rect rect = rtc_field_rect(field);
     const bool selected = state.selected_field == field;
-    canvas().fillRect(
-        rect.left, rect.top, rect.width, rect.height, selected ? TFT_BLACK : TFT_WHITE);
-    canvas().setTextColor(selected ? TFT_WHITE : TFT_BLACK,
-                          selected ? TFT_BLACK : TFT_WHITE);
-    canvas().setTextDatum(textdatum_t::middle_center);
-    canvas().setTextSize(RTC_FIELD_TEXT_SIZE);
-    canvas().drawString(text, rect.left + rect.width / 2, rect.top + rect.height / 2);
+    canvas().fill_rect(
+        rect,
+        selected ? display_color::black : display_color::white);
+    canvas().set_text_color(
+        selected ? display_color::white : display_color::black,
+        selected ? display_color::black : display_color::white);
+    canvas().set_text_alignment(display_text_alignment::middle_center);
+    canvas().set_text_size(RTC_FIELD_TEXT_SIZE);
+    canvas().draw_text(text, rect.left + rect.width / 2, rect.top + rect.height / 2);
 }
 
 void draw_rtc_editor(const rtc_view_state& state)
 {
-    canvas().fillRect(0, RTC_EDITOR_REGION_TOP, canvas().width(), RTC_EDITOR_REGION_HEIGHT, TFT_WHITE);
+    canvas().fill_rect(
+        0,
+        RTC_EDITOR_REGION_TOP,
+        canvas().width(),
+        RTC_EDITOR_REGION_HEIGHT,
+        display_color::white);
     constexpr rtc_edit_field fields[] = {
         rtc_edit_field::year, rtc_edit_field::month, rtc_edit_field::day,
         rtc_edit_field::hour, rtc_edit_field::minute, rtc_edit_field::second,
@@ -371,52 +462,68 @@ void draw_rtc_editor(const rtc_view_state& state)
     for (const rtc_edit_field field : fields) {
         draw_rtc_field(state, field);
     }
-    canvas().setTextColor(TFT_BLACK, TFT_WHITE);
-    canvas().setTextDatum(textdatum_t::middle_center);
-    canvas().setTextSize(RTC_FIELD_TEXT_SIZE);
-    canvas().drawString(":", 231, RTC_DATE_FIELD_TOP + RTC_FIELD_HEIGHT / 2);
-    canvas().drawString(":", 285, RTC_DATE_FIELD_TOP + RTC_FIELD_HEIGHT / 2);
-    canvas().drawString(":", 213, RTC_TIME_FIELD_TOP + RTC_FIELD_HEIGHT / 2);
-    canvas().drawString(":", 267, RTC_TIME_FIELD_TOP + RTC_FIELD_HEIGHT / 2);
+    canvas().set_text_color(display_color::black, display_color::white);
+    canvas().set_text_alignment(display_text_alignment::middle_center);
+    canvas().set_text_size(RTC_FIELD_TEXT_SIZE);
+    canvas().draw_text(":", 231, RTC_DATE_FIELD_TOP + RTC_FIELD_HEIGHT / 2);
+    canvas().draw_text(":", 285, RTC_DATE_FIELD_TOP + RTC_FIELD_HEIGHT / 2);
+    canvas().draw_text(":", 213, RTC_TIME_FIELD_TOP + RTC_FIELD_HEIGHT / 2);
+    canvas().draw_text(":", 267, RTC_TIME_FIELD_TOP + RTC_FIELD_HEIGHT / 2);
     draw_centered_line(rtc_message_text(state), RTC_MESSAGE_CENTER_Y, RTC_MESSAGE_TEXT_SIZE);
 }
 
-void draw_rtc_key(std::uint8_t index, bool pressed)
+bool rtc_keys_enabled(const rtc_view_state& state)
+{
+    return state.rtc_available && !state.loading && !state.saving;
+}
+
+void draw_rtc_key(std::uint8_t index, bool pressed, bool enabled)
 {
     if (index >= RTC_KEY_COUNT) {
         return;
     }
     const display_rect rect = rtc_key_rect(index);
-    const std::uint32_t background = pressed ? TFT_BLACK : TFT_WHITE;
-    const std::uint32_t foreground = pressed ? TFT_WHITE : TFT_BLACK;
-    canvas().fillRect(rect.left, rect.top, rect.width, rect.height, background);
-    canvas().drawFastHLine(rect.left, rect.top, rect.width, TFT_BLACK);
-    canvas().drawFastHLine(rect.left, rect.top + rect.height - 1, rect.width, TFT_BLACK);
+    const bool active_pressed = pressed && enabled;
+    const display_color background =
+        active_pressed ? display_color::black : display_color::white;
+    const display_color foreground =
+        active_pressed ? display_color::white : display_color::black;
+    draw_action_background(rect, active_pressed, enabled);
+    canvas().draw_horizontal_line(rect.left, rect.top, rect.width, display_color::black);
+    canvas().draw_horizontal_line(
+        rect.left,
+        rect.top + rect.height - 1,
+        rect.width,
+        display_color::black);
     const std::int32_t center_x = rect.left + rect.width / 2;
     const std::int32_t center_y = rect.top + rect.height / 2;
-    canvas().setTextColor(foreground, background);
-    canvas().setTextDatum(textdatum_t::middle_center);
-    canvas().setTextSize(RTC_KEY_TEXT_SIZE);
+    canvas().set_text_color(foreground, background);
+    canvas().set_text_alignment(display_text_alignment::middle_center);
+    canvas().set_text_size(RTC_KEY_TEXT_SIZE);
     if (index == 9U) {
-        canvas().drawLine(center_x - 18, center_y, center_x - 5, center_y + 13, foreground);
-        canvas().drawLine(center_x - 5, center_y + 13, center_x + 20, center_y - 16, foreground);
+        canvas().draw_line(center_x - 18, center_y, center_x - 5, center_y + 13, foreground);
+        canvas().draw_line(center_x - 5, center_y + 13, center_x + 20, center_y - 16, foreground);
     } else if (index == 11U) {
-        canvas().drawLine(center_x - 22, center_y, center_x + 22, center_y, foreground);
-        canvas().drawLine(center_x - 22, center_y, center_x - 7, center_y - 14, foreground);
-        canvas().drawLine(center_x - 22, center_y, center_x - 7, center_y + 14, foreground);
+        canvas().draw_line(center_x - 22, center_y, center_x + 22, center_y, foreground);
+        canvas().draw_line(center_x - 22, center_y, center_x - 7, center_y - 14, foreground);
+        canvas().draw_line(center_x - 22, center_y, center_x - 7, center_y + 14, foreground);
     } else {
         constexpr const char* labels[] = {
             "7", "8", "9", "4", "5", "6", "1", "2", "3", "", "0", "",
         };
-        canvas().drawString(labels[index], center_x, center_y);
+        canvas().draw_text(labels[index], center_x, center_y);
     }
 }
 
 void draw_test_content(const test_view_state& state)
 {
-    canvas().fillRect(
-        0, TEST_CONTENT_REGION_TOP, canvas().width(), TEST_CONTENT_REGION_HEIGHT, TFT_WHITE);
-    canvas().setTextColor(TFT_BLACK, TFT_WHITE);
+    canvas().fill_rect(
+        0,
+        TEST_CONTENT_REGION_TOP,
+        canvas().width(),
+        TEST_CONTENT_REGION_HEIGHT,
+        display_color::white);
+    canvas().set_text_color(display_color::black, display_color::white);
     draw_centered_line(
         state.text_state == test_text_state::hi_xi ? "HI XI" : "Hello world", 340, 4U);
     char line[80] = {};
@@ -438,10 +545,14 @@ void draw_test_content(const test_view_state& state)
 
 void draw_battery_content(const battery_view_state& state)
 {
-    canvas().fillRect(
-        0, BATTERY_CONTENT_REGION_TOP, canvas().width(), BATTERY_CONTENT_REGION_HEIGHT, TFT_WHITE);
+    canvas().fill_rect(
+        0,
+        BATTERY_CONTENT_REGION_TOP,
+        canvas().width(),
+        BATTERY_CONTENT_REGION_HEIGHT,
+        display_color::white);
     if (state.loading) {
-        canvas().setTextColor(TFT_BLACK, TFT_WHITE);
+        canvas().set_text_color(display_color::black, display_color::white);
         draw_centered_line("Loading...", BATTERY_FIRST_ROW_CENTER_Y, 2U);
         return;
     }
@@ -463,12 +574,12 @@ void draw_battery_content(const battery_view_state& state)
                 state.charging_valid ? (state.charging ? "Charging" : "Not charging") : "Unknown");
         }
         const std::int32_t y = BATTERY_FIRST_ROW_CENTER_Y + row * BATTERY_ROW_HEIGHT;
-        canvas().setTextColor(TFT_BLACK, TFT_WHITE);
-        canvas().setTextSize(BATTERY_ROW_TEXT_SIZE);
-        canvas().setTextDatum(textdatum_t::middle_left);
-        canvas().drawString(labels[row], BATTERY_LABEL_LEFT, y);
-        canvas().setTextDatum(textdatum_t::middle_right);
-        canvas().drawString(value, BATTERY_VALUE_RIGHT, y);
+        canvas().set_text_color(display_color::black, display_color::white);
+        canvas().set_text_size(BATTERY_ROW_TEXT_SIZE);
+        canvas().set_text_alignment(display_text_alignment::middle_left);
+        canvas().draw_text(labels[row], BATTERY_LABEL_LEFT, y);
+        canvas().set_text_alignment(display_text_alignment::middle_right);
+        canvas().draw_text(value, BATTERY_VALUE_RIGHT, y);
     }
 }
 
@@ -502,16 +613,19 @@ void draw_file_row(const file_view_state& state, std::uint8_t index, bool presse
     }
     const display_rect rect = file_row_rect(index);
     const file_row_view_state& row = state.rows[index];
-    const std::uint32_t background = pressed ? TFT_BLACK : TFT_WHITE;
-    const std::uint32_t foreground = pressed ? TFT_WHITE : TFT_BLACK;
-    canvas().fillRect(rect.left, rect.top, rect.width, rect.height, background);
-    canvas().setFont(&fonts::efontCN_24);
-    canvas().setTextSize(FILE_ROW_TEXT_SIZE);
-    canvas().setTextDatum(textdatum_t::middle_left);
-    canvas().setTextColor(foreground, background);
+    const bool active_pressed = pressed && row.enabled;
+    const display_color background =
+        active_pressed ? display_color::black : display_color::white;
+    const display_color foreground =
+        active_pressed ? display_color::white : display_color::black;
+    draw_action_background(rect, active_pressed, row.enabled);
+    canvas().set_font(display_font::cjk_24);
+    canvas().set_text_size(FILE_ROW_TEXT_SIZE);
+    canvas().set_text_alignment(display_text_alignment::middle_left);
+    canvas().set_text_color(foreground, background);
     char name[FILE_VIEW_NAME_LENGTH + 4U] = {};
     std::snprintf(name, sizeof(name), "%s%s", row.name, row.name_truncated ? "..." : "");
-    while (canvas().textWidth(name) > rect.width - 36 && std::strlen(name) > 3U) {
+    while (canvas().text_width(name) > rect.width - 36 && std::strlen(name) > 3U) {
         const std::size_t length = std::strlen(name);
         std::size_t cut = length - 4U;
         while (cut > 0U && (static_cast<unsigned char>(name[cut]) & 0xc0U) == 0x80U) {
@@ -519,58 +633,97 @@ void draw_file_row(const file_view_state& state, std::uint8_t index, bool presse
         }
         std::memcpy(name + cut, "...", 4U);
     }
-    canvas().drawString(name, rect.left + 4, rect.top + rect.height / 2);
+    canvas().draw_text(name, rect.left + 4, rect.top + rect.height / 2);
     if (row.directory) {
-        canvas().setTextDatum(textdatum_t::middle_right);
-        canvas().drawString(">", rect.left + rect.width - 4, rect.top + rect.height / 2);
+        canvas().set_text_alignment(display_text_alignment::middle_right);
+        canvas().draw_text(">", rect.left + rect.width - 4, rect.top + rect.height / 2);
     }
-    canvas().setFont(&fonts::Font0);
+    canvas().set_font(display_font::default_font);
 }
 
-void draw_file_page_button(bool next, bool pressed)
+bool file_page_button_enabled(const file_view_state& state, bool next)
+{
+    return next ? state.page_index + 1U < state.page_count
+                : state.page_index > 0U;
+}
+
+void draw_file_page_button(
+    const file_view_state& state,
+    bool next,
+    bool pressed)
 {
     const display_rect rect = next ? file_next_page_rect() : file_previous_page_rect();
-    const std::uint32_t background = pressed ? TFT_BLACK : TFT_WHITE;
-    const std::uint32_t foreground = pressed ? TFT_WHITE : TFT_BLACK;
-    canvas().fillRect(rect.left, rect.top, rect.width, rect.height, background);
-    canvas().setTextColor(foreground, background);
-    canvas().setTextDatum(textdatum_t::middle_center);
-    canvas().setTextSize(FILE_PAGE_BUTTON_TEXT_SIZE);
-    canvas().drawString(next ? ">" : "<", rect.left + rect.width / 2, rect.top + rect.height / 2);
+    const bool enabled = file_page_button_enabled(state, next);
+    const bool active_pressed = pressed && enabled;
+    const display_color background =
+        active_pressed ? display_color::black : display_color::white;
+    const display_color foreground =
+        active_pressed ? display_color::white : display_color::black;
+    draw_action_background(rect, active_pressed, enabled);
+    if (!enabled) {
+        return;
+    }
+    canvas().set_text_color(foreground, background);
+    canvas().set_text_alignment(display_text_alignment::middle_center);
+    canvas().set_text_size(FILE_PAGE_BUTTON_TEXT_SIZE);
+    canvas().draw_text(
+        next ? ">" : "<",
+        rect.left + rect.width / 2,
+        rect.top + rect.height / 2);
 }
 
 void draw_file_content(const file_view_state& state)
 {
-    canvas().fillRect(
-        0, FILE_CONTENT_REGION_TOP, canvas().width(), FILE_CONTENT_REGION_HEIGHT, TFT_WHITE);
-    canvas().setFont(&fonts::efontCN_24);
-    canvas().setTextSize(1U);
-    canvas().setTextColor(TFT_BLACK, TFT_WHITE);
-    canvas().setTextDatum(textdatum_t::middle_left);
-    canvas().drawString(state.path, FILE_PATH_LEFT, FILE_PATH_TOP + FILE_PATH_HEIGHT / 2);
-    canvas().drawFastHLine(FILE_PATH_LEFT, FILE_PATH_TOP + FILE_PATH_HEIGHT,
-                           PAPER_MONO_PORTRAIT_WIDTH - FILE_PATH_LEFT * 2, TFT_BLACK);
-    canvas().setFont(&fonts::Font0);
+    canvas().fill_rect(
+        0,
+        FILE_CONTENT_REGION_TOP,
+        canvas().width(),
+        FILE_CONTENT_REGION_HEIGHT,
+        display_color::white);
+    canvas().set_font(display_font::cjk_24);
+    canvas().set_text_size(1U);
+    canvas().set_text_color(display_color::black, display_color::white);
+    canvas().set_text_alignment(display_text_alignment::middle_left);
+    canvas().draw_text(state.path, FILE_PATH_LEFT, FILE_PATH_TOP + FILE_PATH_HEIGHT / 2);
+    canvas().draw_horizontal_line(
+        FILE_PATH_LEFT,
+        FILE_PATH_TOP + FILE_PATH_HEIGHT,
+        UI_DISPLAY_WIDTH - FILE_PATH_LEFT * 2,
+        display_color::black);
+    canvas().set_font(display_font::default_font);
     if (state.status == file_view_status::ready) {
         for (std::uint8_t index = 0U; index < state.row_count; ++index) {
             draw_file_row(state, index, false);
         }
-        draw_file_page_button(false, false);
-        draw_file_page_button(true, false);
+        draw_file_page_button(state, false, false);
+        draw_file_page_button(state, true, false);
         char page[24] = {};
         std::snprintf(page, sizeof(page), "Page %u/%u", state.page_index + 1U, state.page_count);
-        canvas().setTextColor(TFT_BLACK, TFT_WHITE);
-        canvas().setTextDatum(textdatum_t::middle_center);
-        canvas().setTextSize(FILE_PAGE_LABEL_TEXT_SIZE);
-        canvas().drawString(page, canvas().width() / 2, FILE_PAGINATION_TOP + FILE_PAGINATION_HEIGHT / 2);
+        canvas().set_text_color(display_color::black, display_color::white);
+        canvas().set_text_alignment(display_text_alignment::middle_center);
+        canvas().set_text_size(FILE_PAGE_LABEL_TEXT_SIZE);
+        canvas().draw_text(
+            page,
+            canvas().width() / 2,
+            FILE_PAGINATION_TOP + FILE_PAGINATION_HEIGHT / 2);
     } else {
-        canvas().setTextColor(TFT_BLACK, TFT_WHITE);
+        canvas().set_text_color(display_color::black, display_color::white);
         draw_centered_line(file_status_text(state.status), 360, 2U);
     }
     if (state.popup_visible) {
-        canvas().fillRect(FILE_POPUP_LEFT, FILE_POPUP_TOP, FILE_POPUP_WIDTH, FILE_POPUP_HEIGHT, TFT_WHITE);
-        canvas().drawRect(FILE_POPUP_LEFT, FILE_POPUP_TOP, FILE_POPUP_WIDTH, FILE_POPUP_HEIGHT, TFT_BLACK);
-        canvas().setTextColor(TFT_BLACK, TFT_WHITE);
+        canvas().fill_rect(
+            FILE_POPUP_LEFT,
+            FILE_POPUP_TOP,
+            FILE_POPUP_WIDTH,
+            FILE_POPUP_HEIGHT,
+            display_color::white);
+        canvas().draw_rect(
+            FILE_POPUP_LEFT,
+            FILE_POPUP_TOP,
+            FILE_POPUP_WIDTH,
+            FILE_POPUP_HEIGHT,
+            display_color::black);
+        canvas().set_text_color(display_color::black, display_color::white);
         draw_centered_line("File preview is not supported", FILE_POPUP_TOP + FILE_POPUP_HEIGHT / 2,
                            FILE_POPUP_TEXT_SIZE);
     }
@@ -581,8 +734,8 @@ void draw_full_view(
     std::uint8_t selected_light,
     std::int16_t pressed_light)
 {
-    canvas().fillScreen(TFT_WHITE);
-    canvas().setTextColor(TFT_BLACK, TFT_WHITE);
+    canvas().fill_screen(display_color::white);
+    canvas().set_text_color(display_color::black, display_color::white);
     switch (request.view) {
         case ui_view_id::menu:
             draw_centered_line(PROJECT_NAME, MENU_TITLE_CENTER_Y, MENU_TITLE_TEXT_SIZE);
@@ -600,7 +753,7 @@ void draw_full_view(
             draw_centered_line("RTC Setting", RTC_TITLE_CENTER_Y, RTC_TITLE_TEXT_SIZE);
             draw_rtc_editor(request.rtc);
             for (std::uint8_t index = 0U; index < RTC_KEY_COUNT; ++index) {
-                draw_rtc_key(index, false);
+                draw_rtc_key(index, false, rtc_keys_enabled(request.rtc));
             }
             break;
         case ui_view_id::battery:
@@ -621,22 +774,22 @@ display_rect content_rect(display_update_region region)
     switch (region) {
         case display_update_region::rtc_editor:
         case display_update_region::rtc_editor_and_key:
-            return {0, RTC_EDITOR_REGION_TOP, PAPER_MONO_PORTRAIT_WIDTH, RTC_EDITOR_REGION_HEIGHT};
+            return {0, RTC_EDITOR_REGION_TOP, UI_DISPLAY_WIDTH, RTC_EDITOR_REGION_HEIGHT};
         case display_update_region::test_content:
-            return {0, TEST_CONTENT_REGION_TOP, PAPER_MONO_PORTRAIT_WIDTH, TEST_CONTENT_REGION_HEIGHT};
+            return {0, TEST_CONTENT_REGION_TOP, UI_DISPLAY_WIDTH, TEST_CONTENT_REGION_HEIGHT};
         case display_update_region::battery_content:
-            return {0, BATTERY_CONTENT_REGION_TOP, PAPER_MONO_PORTRAIT_WIDTH,
+            return {0, BATTERY_CONTENT_REGION_TOP, UI_DISPLAY_WIDTH,
                     BATTERY_CONTENT_REGION_HEIGHT};
         case display_update_region::file_content:
-            return {0, FILE_CONTENT_REGION_TOP, PAPER_MONO_PORTRAIT_WIDTH, FILE_CONTENT_REGION_HEIGHT};
+            return {0, FILE_CONTENT_REGION_TOP, UI_DISPLAY_WIDTH, FILE_CONTENT_REGION_HEIGHT};
         case display_update_region::status_bar:
             return status_bar_rect();
         case display_update_region::full:
-            return {0, 0, PAPER_MONO_PORTRAIT_WIDTH, PAPER_MONO_PORTRAIT_HEIGHT};
+            return {0, 0, UI_DISPLAY_WIDTH, UI_DISPLAY_HEIGHT};
         case display_update_region::control:
-            return {0, 0, PAPER_MONO_PORTRAIT_WIDTH, FRONT_LIGHT_BAR_HEIGHT};
+            return {0, 0, UI_DISPLAY_WIDTH, FRONT_LIGHT_BAR_HEIGHT};
     }
-    return {0, 0, PAPER_MONO_PORTRAIT_WIDTH, PAPER_MONO_PORTRAIT_HEIGHT};
+    return {0, 0, UI_DISPLAY_WIDTH, UI_DISPLAY_HEIGHT};
 }
 
 void draw_partial_request(const display_request& request, display_rect& rect)
@@ -648,7 +801,10 @@ void draw_partial_request(const display_request& request, display_rect& rect)
             draw_rtc_editor(request.rtc);
             for (std::uint8_t index = 0U; index < RTC_KEY_COUNT; ++index) {
                 if ((request.released_key_mask & (1U << index)) != 0U) {
-                    draw_rtc_key(index, false);
+                    draw_rtc_key(
+                        index,
+                        false,
+                        rtc_keys_enabled(request.rtc));
                     rect = merged_rect(rect, rtc_key_rect(index));
                 }
             }
@@ -682,7 +838,7 @@ display_rect draw_control(
     switch (request.control) {
         case ui_control_type::front_light:
             draw_front_light_bar(selected_light, pressed_light);
-            return {0, 0, PAPER_MONO_PORTRAIT_WIDTH, FRONT_LIGHT_BAR_HEIGHT};
+            return {0, 0, UI_DISPLAY_WIDTH, FRONT_LIGHT_BAR_HEIGHT};
         case ui_control_type::menu_entry:
             draw_menu_entry(request.index, request.pressed);
             return menu_entry_rect(request.index);
@@ -690,16 +846,19 @@ display_rect draw_control(
             draw_back_button(latest.view, request.pressed);
             return back_button_rect(latest.view);
         case ui_control_type::rtc_key:
-            draw_rtc_key(request.index, request.pressed);
+            draw_rtc_key(
+                request.index,
+                request.pressed,
+                rtc_keys_enabled(latest.rtc));
             return rtc_key_rect(request.index);
         case ui_control_type::file_row:
             draw_file_row(latest.file, request.index, request.pressed);
             return file_row_rect(request.index);
         case ui_control_type::file_previous_page:
-            draw_file_page_button(false, request.pressed);
+            draw_file_page_button(latest.file, false, request.pressed);
             return file_previous_page_rect();
         case ui_control_type::file_next_page:
-            draw_file_page_button(true, request.pressed);
+            draw_file_page_button(latest.file, true, request.pressed);
             return file_next_page_rect();
         case ui_control_type::none:
         case ui_control_type::rtc_field:
@@ -761,11 +920,10 @@ void renderer_task(void*)
                     draw_full_view(latest, selected_light, pressed_light);
                     displayed_status = status_bar_get_state();
                     draw_status_bar(displayed_status);
-                    rect = {0, 0, PAPER_MONO_PORTRAIT_WIDTH, PAPER_MONO_PORTRAIT_HEIGHT};
+                    rect = {0, 0, UI_DISPLAY_WIDTH, UI_DISPLAY_HEIGHT};
                     status_displayed = true;
                 }
-                hal_display_refresh(rect, mode);
-                record_refresh(debt, mode, control.update_region);
+                commit_refresh(debt, rect, mode, control.update_region);
             }
         }
 
@@ -787,40 +945,55 @@ void renderer_task(void*)
             selected_light = latest.view == ui_view_id::test
                                  ? latest.test.front_light_level
                                  : selected_light;
+            const refresh_mode requested_mode =
+                debt.status_cleanup_pending ? refresh_mode::quality : next.mode;
             refresh_mode mode = resolve_mode(
-                next.mode, next.update_region, next.allow_quality_cleanup, debt);
+                requested_mode,
+                next.update_region,
+                next.allow_quality_cleanup,
+                debt);
             display_rect rect = content_rect(next.update_region);
             if (!has_frame || mode == refresh_mode::quality ||
                 next.update_region == display_update_region::full) {
-                mode = mode == refresh_mode::quality ? mode : next.mode;
                 draw_full_view(next, selected_light, pressed_light);
-                rect = {0, 0, PAPER_MONO_PORTRAIT_WIDTH, PAPER_MONO_PORTRAIT_HEIGHT};
+                rect = {0, 0, UI_DISPLAY_WIDTH, UI_DISPLAY_HEIGHT};
             } else {
                 draw_partial_request(next, rect);
             }
             const status_bar_view_state status = status_bar_get_state();
             if (!status_displayed || !status_states_equal(status, displayed_status) ||
-                rect.height == PAPER_MONO_PORTRAIT_HEIGHT) {
+                rect.height == UI_DISPLAY_HEIGHT) {
                 draw_status_bar(status);
                 displayed_status = status;
                 status_displayed = true;
                 rect = merged_rect(rect, status_bar_rect());
             }
-            hal_display_refresh(rect, mode);
-            record_refresh(debt, mode, next.update_region);
-            has_frame = true;
-            ESP_LOGI(log_tag, "view refresh mode=%s view=%u region=%u",
-                     refresh_mode_name(mode), static_cast<unsigned>(next.view),
-                     static_cast<unsigned>(next.update_region));
+            const display_refresh_result refresh =
+                commit_refresh(debt, rect, mode, next.update_region);
+            has_frame = refresh.success;
+            status_displayed = refresh.success;
+            ESP_LOGI(
+                log_tag,
+                "view refresh requested=%s actual=%s success=%d view=%u region=%u",
+                refresh_mode_name(mode),
+                refresh_mode_name(refresh.actual_mode),
+                refresh.success,
+                static_cast<unsigned>(next.view),
+                static_cast<unsigned>(next.update_region));
         }
 
         const status_bar_view_state status = status_bar_get_state();
         if (has_frame && (!status_displayed || !status_states_equal(status, displayed_status))) {
             draw_status_bar(status);
-            hal_display_refresh(status_bar_rect(), refresh_mode::fastest);
-            record_refresh(debt, refresh_mode::fastest, display_update_region::status_bar);
-            displayed_status = status;
-            status_displayed = true;
+            const display_refresh_result refresh = commit_refresh(
+                debt,
+                status_bar_rect(),
+                refresh_mode::fastest,
+                display_update_region::status_bar);
+            if (refresh.success) {
+                displayed_status = status;
+                status_displayed = true;
+            }
         }
     }
 }
@@ -872,8 +1045,6 @@ bool ui_render_test(const test_view_state& state, ui_update_reason reason)
                            : refresh_mode::fast;
         request.update_region = light_selection ? display_update_region::control
                                                 : display_update_region::test_content;
-        request.minimum_refresh_interval_ms =
-            state.touch_type == test_touch_display_type::long_press ? 250U : 0U;
     }
     return submit_request(request);
 }
@@ -912,7 +1083,7 @@ bool ui_render_file(const file_view_state& state, ui_update_reason reason)
     display_request request = make_request(ui_view_id::file, reason);
     request.file = state;
     if (reason != ui_update_reason::view_opened) {
-        request.mode = refresh_mode::fast;
+        request.mode = refresh_mode::text;
         request.update_region = display_update_region::file_content;
     }
     return submit_request(request);

@@ -3,8 +3,8 @@
 #include <M5Unified.h>
 #include <esp_log.h>
 
-#include "display.hpp"
 #include "internal_i2c.hpp"
+#include "paper_mono_config.hpp"
 
 namespace {
 
@@ -43,8 +43,8 @@ bool hal_touch_sample(touch_sample& sample)
         "update PaperMono touch transform when display rotation changes");
     constexpr std::int32_t touch_x_max = touch_device_width - 1;
     constexpr std::int32_t touch_y_max = touch_device_height - 1;
-    constexpr std::int32_t screen_x_max = PAPER_MONO_PORTRAIT_WIDTH - 1U;
-    constexpr std::int32_t screen_y_max = PAPER_MONO_PORTRAIT_HEIGHT - 1U;
+    constexpr std::int32_t screen_x_max = PAPER_MONO_DISPLAY_WIDTH - 1U;
+    constexpr std::int32_t screen_y_max = PAPER_MONO_DISPLAY_HEIGHT - 1U;
     const std::int32_t touch_x = clamp_coordinate(detail.x, touch_x_max);
     const std::int32_t touch_y = clamp_coordinate(detail.y, touch_y_max);
 

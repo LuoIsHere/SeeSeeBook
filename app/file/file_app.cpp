@@ -144,7 +144,7 @@ void file_app::handle_action(const ui_action_event& action)
     }
 }
 
-void file_app::handle_storage_status(const storage_status_event& event)
+void file_app::handle_storage_status(const app_storage_status_event& event)
 {
     requested_generation_ = event.media_generation;
     release_directory_result();
@@ -158,7 +158,7 @@ void file_app::handle_storage_status(const storage_status_event& event)
     submit_frame(ui_update_reason::content_changed);
 }
 
-void file_app::handle_directory_result(const storage_result_event& event)
+void file_app::handle_directory_result(const app_storage_result_event& event)
 {
     const storage_directory_result* result = nullptr;
     if (!storage_service_resolve_result(event.handle, result) || result == nullptr ||
@@ -219,6 +219,8 @@ void file_app::activate_row(std::uint8_t row_index)
     const storage_directory_result* result = nullptr;
     if (status_ != file_view_status::ready ||
         !storage_service_resolve_result(directory_handle_, result) || result == nullptr) {
+        status_ = file_view_status::directory_error;
+        submit_frame(ui_update_reason::content_changed);
         return;
     }
     const std::size_t item_index =

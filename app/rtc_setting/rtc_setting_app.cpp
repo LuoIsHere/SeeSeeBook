@@ -205,12 +205,12 @@ void rtc_setting_app::handle_action(const ui_action_event& action)
     handle_key(action.index);
 }
 
-void rtc_setting_app::handle_rtc_event(const rtc_service_event& event)
+void rtc_setting_app::handle_rtc_event(const app_rtc_event& event)
 {
     if (event.request_id != state_.session_id) {
         return;
     }
-    if (event.operation == rtc_service_operation::write) {
+    if (event.operation == app_rtc_operation::write) {
         state_.saving = false;
         if (event.success) {
             app_request_back();

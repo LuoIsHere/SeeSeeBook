@@ -3,6 +3,8 @@ idf_component_register(
         "paper_mono/paper_mono.cpp"
         "paper_mono/paper_mono_battery.cpp"
         "paper_mono/paper_mono_display.cpp"
+        "paper_mono/display/epd_otp_driver.cpp"
+        "paper_mono/display/epd_otp_transport.cpp"
         "paper_mono/paper_mono_internal_i2c.cpp"
         "paper_mono/paper_mono_rtc.cpp"
         "paper_mono/paper_mono_storage.cpp"
@@ -11,6 +13,9 @@ idf_component_register(
     REQUIRES
         core
         m5unified
+        esp_driver_gpio
         esp_driver_sdmmc
+        esp_driver_spi
+        esp_timer
         fatfs
 )

@@ -30,6 +30,25 @@ bool control_has_feedback(ui_control_type control)
     return false;
 }
 
+bool activated_action_replaces_release_feedback(ui_control_type control)
+{
+    switch (control) {
+        case ui_control_type::navigate_back:
+        case ui_control_type::menu_entry:
+        case ui_control_type::front_light:
+        case ui_control_type::rtc_key:
+        case ui_control_type::file_row:
+        case ui_control_type::file_previous_page:
+        case ui_control_type::file_next_page:
+            return true;
+        case ui_control_type::none:
+        case ui_control_type::rtc_field:
+        case ui_control_type::test_surface:
+            return false;
+    }
+    return false;
+}
+
 bool hit_test(
     std::int16_t x,
     std::int16_t y,
@@ -62,7 +81,7 @@ bool hit_test(
             }
         }
         const display_rect content = {
-            0, TEST_CONTENT_REGION_TOP, PAPER_MONO_PORTRAIT_WIDTH, TEST_CONTENT_REGION_HEIGHT,
+            0, TEST_CONTENT_REGION_TOP, UI_DISPLAY_WIDTH, TEST_CONTENT_REGION_HEIGHT,
         };
         if (point_in_rect(x, y, content)) {
             control = ui_control_type::test_surface;
@@ -169,9 +188,9 @@ bool ui_interaction_process(const input_event& input, ui_action_event& action)
     const std::uint8_t index = captured_index;
     if (input.gesture == input_gesture_type::click) {
         const bool activated = same_captured_control(input.end_x, input.end_y);
-        // RTC content and key release are merged by the RTC renderer into one EPD request.
+        // Activated controls are restored by the resulting App frame or view switch.
         if (control_has_feedback(control) &&
-            (!activated || control != ui_control_type::rtc_key)) {
+            (!activated || !activated_action_replaces_release_feedback(control))) {
             ui_render_control(control, index, false);
         }
         captured_control = ui_control_type::none;

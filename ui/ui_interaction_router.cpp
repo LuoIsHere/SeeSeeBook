@@ -10,6 +10,7 @@ namespace {
 
 constexpr char log_tag[] = "ui_interaction";
 ui_view_id active_view = ui_view_id::menu;
+menu_view_state active_menu_view = {};
 file_view_state active_file_view = {};
 bool rtc_controls_enabled = false;
 ui_control_type captured_control = ui_control_type::none;
@@ -65,7 +66,10 @@ bool hit_test(
     control = ui_control_type::none;
     index = 0U;
     if (active_view == ui_view_id::menu) {
-        for (std::uint8_t entry = 0U; entry < MENU_ENTRY_COUNT; ++entry) {
+        for (std::uint8_t entry = 0U;
+             entry < active_menu_view.entry_count &&
+             entry < menu_view_entry_capacity;
+             ++entry) {
             if (point_in_rect(x, y, menu_entry_rect(entry))) {
                 control = ui_control_type::menu_entry;
                 index = entry;
@@ -179,6 +183,10 @@ bool ui_interaction_process(const input_event& input, ui_action_event& action)
         return false;
     }
     if (input.gesture == input_gesture_type::press) {
+        if (active_view == ui_view_id::menu &&
+            !ui_presentation_get_menu_view(active_menu_view)) {
+            return false;
+        }
         if (active_view == ui_view_id::file &&
             !ui_presentation_get_file_view(active_file_view)) {
             return false;

@@ -1,6 +1,7 @@
 idf_component_register(
     SRCS
         "app.cpp"
+        "app_registry.cpp"
         "battery/battery_app.cpp"
         "file/file_app.cpp"
         "menu/menu_app.cpp"

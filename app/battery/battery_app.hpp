@@ -5,8 +5,6 @@
 
 class battery_app final : public app_base {
 public:
-    battery_app();
-
     void handle_app_event(const app_event& event) override;
 
 protected:

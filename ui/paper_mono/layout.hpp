@@ -17,7 +17,8 @@
 #define MENU_ENTRY_TOP 190
 #define MENU_ENTRY_HEIGHT 96
 #define MENU_ENTRY_TEXT_SIZE 3U
-#define MENU_ENTRY_COUNT 4U
+
+static_assert(menu_view_entry_capacity == 4U);
 
 #define RTC_BACK_BUTTON_LEFT 20
 #define RTC_BACK_BUTTON_TOP 20

@@ -13,8 +13,6 @@
 
 class file_app final : public app_base {
 public:
-    file_app();
-
     void handle_app_event(const app_event& event) override;
 
 protected:
@@ -32,6 +30,7 @@ private:
     std::uint32_t requested_generation_ = 0U;
     std::uint32_t popup_started_ms_ = 0U;
     bool popup_visible_ = false;
+    file_view_state view_ = {};
 
     void handle_action(const ui_action_event& action);
     void handle_storage_status(const app_storage_status_event& event);

@@ -6,6 +6,7 @@
 #include "battery_view.hpp"
 #include "display.hpp"
 #include "file_view.hpp"
+#include "menu_view.hpp"
 #include "rtc_view.hpp"
 #include "test_view.hpp"
 #include "ui_action.hpp"
@@ -36,16 +37,21 @@ enum class display_update_region : std::uint8_t {
     file_content,
 };
 
+union display_view_payload {
+    menu_view_state menu;
+    test_view_state test;
+    rtc_view_state rtc;
+    battery_view_state battery;
+    file_view_state file;
+};
+
 struct display_request {
     std::uint32_t queued_at_ms;
     std::uint32_t view_generation;
     ui_view_id view;
     refresh_mode mode;
     display_update_region update_region;
-    test_view_state test;
-    rtc_view_state rtc;
-    battery_view_state battery;
-    file_view_state file;
+    display_view_payload payload;
     std::uint16_t released_key_mask;
     bool allow_quality_cleanup;
 };
@@ -60,5 +66,7 @@ struct display_control_request {
     bool allow_quality_cleanup;
 };
 
+static_assert(std::is_trivially_copyable_v<display_view_payload>);
 static_assert(std::is_trivially_copyable_v<display_request>);
+static_assert(sizeof(display_request) <= 680U);
 static_assert(std::is_trivially_copyable_v<display_control_request>);

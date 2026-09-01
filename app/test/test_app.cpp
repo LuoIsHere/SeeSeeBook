@@ -10,11 +10,6 @@ namespace {
 constexpr char log_tag[] = "app_test";
 }
 
-test_app::test_app()
-{
-    setAppInfo().name = "TestApp";
-}
-
 void test_app::handle_app_event(const app_event& event)
 {
     if (event.type != app_event_type::ui_action) {

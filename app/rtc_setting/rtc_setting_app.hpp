@@ -8,8 +8,6 @@
 
 class rtc_setting_app final : public app_base {
 public:
-    rtc_setting_app();
-
     void handle_app_event(const app_event& event) override;
 
 protected:

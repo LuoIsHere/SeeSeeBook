@@ -109,11 +109,6 @@ void datetime_to_digits(const rtc_datetime& value, std::uint8_t* digits)
 
 }  // namespace
 
-rtc_setting_app::rtc_setting_app()
-{
-    setAppInfo().name = "RTCSettingApp";
-}
-
 void rtc_setting_app::handle_app_event(const app_event& event)
 {
     if (event.type == app_event_type::ui_action) {

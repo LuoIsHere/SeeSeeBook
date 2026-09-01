@@ -7,8 +7,6 @@
 
 class test_app final : public app_base {
 public:
-    test_app();
-
     void handle_app_event(const app_event& event) override;
 
 protected:

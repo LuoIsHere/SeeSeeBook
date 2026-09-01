@@ -2,7 +2,6 @@
 
 #include <algorithm>
 #include <cstdio>
-#include <cstring>
 
 #include <esp_log.h>
 #include <esp_timer.h>
@@ -12,22 +11,20 @@
 
 #include "display.hpp"
 #include "layout.hpp"
-#include "project_info.hpp"
 #include "renderer_internal.hpp"
 #include "status_bar.hpp"
+#include "ui_frame_pool.hpp"
 #include "ui_presentation.hpp"
+#include "views/renderer_helpers.hpp"
+#include "views/view_renderer.hpp"
 
 namespace {
 
 constexpr char log_tag[] = "ui_renderer";
 constexpr std::int16_t no_pressed_button = -1;
-constexpr std::uint8_t empty_digit = 0xffU;
-constexpr const char* front_light_labels[FRONT_LIGHT_LEVEL_COUNT] = {
-    "OFF", "25%", "50%", "75%", "100%",
-};
-constexpr const char* menu_entry_labels[MENU_ENTRY_COUNT] = {
-    "Screen Setting", "RTC Setting", "Battery", "Files",
-};
+constexpr std::uint32_t stack_monitor_period_ms = 5000U;
+constexpr std::uint32_t stack_warning_bytes = 2048U;
+constexpr std::uint32_t stack_log_step_bytes = 256U;
 
 QueueHandle_t request_queue = nullptr;
 QueueHandle_t control_queue = nullptr;
@@ -57,6 +54,45 @@ display_surface& canvas()
 std::uint32_t monotonic_ms()
 {
     return static_cast<std::uint32_t>(esp_timer_get_time() / 1000);
+}
+
+void monitor_renderer_stack()
+{
+    static std::uint32_t last_check_ms = 0U;
+    static UBaseType_t lowest_reported_bytes = UINT32_MAX;
+    const std::uint32_t now_ms = monotonic_ms();
+    if (now_ms - last_check_ms < stack_monitor_period_ms) {
+        return;
+    }
+    last_check_ms = now_ms;
+    const UBaseType_t free_bytes = uxTaskGetStackHighWaterMark(nullptr);
+    const bool crossed_warning = free_bytes < stack_warning_bytes &&
+                                 lowest_reported_bytes >= stack_warning_bytes;
+    const bool meaningful_drop = lowest_reported_bytes == UINT32_MAX ||
+                                 free_bytes + stack_log_step_bytes <=
+                                     lowest_reported_bytes;
+    if (!crossed_warning && !meaningful_drop) {
+        return;
+    }
+    lowest_reported_bytes = free_bytes;
+    const ui_frame_pool_stats stats = ui_frame_pool_get_stats();
+    if (free_bytes < stack_warning_bytes) {
+        ESP_LOGW(
+            log_tag,
+            "renderer stack low water=%lu bytes frame_pool=%u/%u peak=%u",
+            static_cast<unsigned long>(free_bytes),
+            stats.active_count,
+            UI_FRAME_POOL_CAPACITY,
+            stats.peak_active_count);
+    } else {
+        ESP_LOGI(
+            log_tag,
+            "renderer stack low water=%lu bytes frame_pool=%u/%u peak=%u",
+            static_cast<unsigned long>(free_bytes),
+            stats.active_count,
+            UI_FRAME_POOL_CAPACITY,
+            stats.peak_active_count);
+    }
 }
 
 const char* refresh_mode_name(refresh_mode mode)
@@ -221,24 +257,6 @@ bool status_states_equal(
     return time_equal && battery_equal;
 }
 
-void draw_centered_line(const char* text, std::int32_t y, std::uint8_t size)
-{
-    canvas().set_text_alignment(display_text_alignment::middle_center);
-    canvas().set_text_size(size);
-    canvas().draw_text(text, canvas().width() / 2, y);
-}
-
-void draw_action_background(
-    const display_rect& rect,
-    bool pressed,
-    bool enabled)
-{
-    const display_color color = pressed && enabled
-                                    ? display_color::black
-                                    : display_color::white;
-    canvas().fill_rect(rect, color);
-}
-
 void draw_status_bar(const status_bar_view_state& state)
 {
     const display_rect rect = status_bar_rect();
@@ -275,467 +293,6 @@ void draw_status_bar(const status_bar_view_state& state)
     }
 }
 
-void draw_front_light_bar(std::uint8_t selected, std::int16_t pressed)
-{
-    canvas().fill_rect(
-        0, 0, canvas().width(), FRONT_LIGHT_BAR_HEIGHT, display_color::white);
-    canvas().set_text_alignment(display_text_alignment::middle_center);
-    canvas().set_text_size(2U);
-    for (std::uint8_t index = 0U; index < FRONT_LIGHT_LEVEL_COUNT; ++index) {
-        const display_rect rect = front_light_button_rect(index);
-        const bool is_pressed = pressed == static_cast<std::int16_t>(index);
-        canvas().fill_rect(
-            rect,
-            is_pressed ? display_color::black : display_color::white);
-        if (!is_pressed) {
-            canvas().draw_rect(rect, display_color::black);
-            if (selected == index) {
-                canvas().draw_rect(
-                    rect.left + 3,
-                    rect.top + 3,
-                    rect.width - 6,
-                    rect.height - 6,
-                    display_color::black);
-            }
-        }
-        canvas().set_text_color(
-            is_pressed ? display_color::white : display_color::black,
-            is_pressed ? display_color::black : display_color::white);
-        canvas().draw_text(
-            front_light_labels[index], rect.left + rect.width / 2, rect.top + rect.height / 2);
-    }
-}
-
-void draw_menu_entry(std::uint8_t index, bool pressed)
-{
-    if (index >= MENU_ENTRY_COUNT) {
-        return;
-    }
-    const display_rect rect = menu_entry_rect(index);
-    const display_color background =
-        pressed ? display_color::black : display_color::white;
-    const display_color foreground =
-        pressed ? display_color::white : display_color::black;
-    canvas().fill_rect(rect, background);
-    if (index == 0U) {
-        canvas().draw_horizontal_line(
-            rect.left,
-            rect.top,
-            rect.width,
-            display_color::black);
-    }
-    canvas().draw_horizontal_line(
-        rect.left,
-        rect.top + rect.height - 1,
-        rect.width,
-        display_color::black);
-    canvas().set_text_color(foreground, background);
-    canvas().set_text_alignment(display_text_alignment::middle_center);
-    canvas().set_text_size(MENU_ENTRY_TEXT_SIZE);
-    canvas().draw_text(
-        menu_entry_labels[index],
-        rect.left + rect.width / 2,
-        rect.top + rect.height / 2);
-}
-
-display_rect back_button_rect(ui_view_id view)
-{
-    switch (view) {
-        case ui_view_id::test:
-            return test_back_button_rect();
-        case ui_view_id::rtc_setting:
-            return rtc_back_button_rect();
-        case ui_view_id::battery:
-            return battery_back_button_rect();
-        case ui_view_id::file:
-            return file_back_button_rect();
-        case ui_view_id::menu:
-            return {0, 0, 0, 0};
-    }
-    return {0, 0, 0, 0};
-}
-
-void draw_back_button(ui_view_id view, bool pressed)
-{
-    const display_rect rect = back_button_rect(view);
-    const display_color background =
-        pressed ? display_color::black : display_color::white;
-    const display_color foreground =
-        pressed ? display_color::white : display_color::black;
-    canvas().fill_rect(rect, background);
-    canvas().draw_rect(rect, display_color::black);
-    canvas().set_text_color(foreground, background);
-    canvas().set_text_alignment(display_text_alignment::middle_center);
-    canvas().set_text_size(APP_BACK_BUTTON_TEXT_SIZE);
-    canvas().draw_text("< Back", rect.left + rect.width / 2, rect.top + rect.height / 2);
-}
-
-const char* rtc_message_text(const rtc_view_state& state)
-{
-    if (state.loading) {
-        return "Loading RTC...";
-    }
-    switch (state.message) {
-        case rtc_setting_message::none:
-            return "";
-        case rtc_setting_message::select_field:
-            return "Select a field";
-        case rtc_setting_message::incomplete:
-            return "Incomplete date/time";
-        case rtc_setting_message::invalid_date:
-            return "Invalid date";
-        case rtc_setting_message::invalid_time:
-            return "Invalid time";
-        case rtc_setting_message::rtc_unavailable:
-            return "RTC unavailable";
-        case rtc_setting_message::saving:
-            return "Saving...";
-        case rtc_setting_message::write_failed:
-            return "RTC write failed";
-    }
-    return "";
-}
-
-void rtc_field_range(rtc_edit_field field, std::uint8_t& start, std::uint8_t& length)
-{
-    switch (field) {
-        case rtc_edit_field::year:
-            start = 0U;
-            length = 4U;
-            break;
-        case rtc_edit_field::month:
-            start = 4U;
-            length = 2U;
-            break;
-        case rtc_edit_field::day:
-            start = 6U;
-            length = 2U;
-            break;
-        case rtc_edit_field::hour:
-            start = 8U;
-            length = 2U;
-            break;
-        case rtc_edit_field::minute:
-            start = 10U;
-            length = 2U;
-            break;
-        case rtc_edit_field::second:
-            start = 12U;
-            length = 2U;
-            break;
-        case rtc_edit_field::none:
-            start = 0U;
-            length = 0U;
-            break;
-    }
-}
-
-void draw_rtc_field(const rtc_view_state& state, rtc_edit_field field)
-{
-    std::uint8_t start = 0U;
-    std::uint8_t length = 0U;
-    rtc_field_range(field, start, length);
-    char text[5] = {};
-    for (std::uint8_t index = 0U; index < length; ++index) {
-        text[index] = state.digits[start + index] == empty_digit
-                          ? '-'
-                          : static_cast<char>('0' + state.digits[start + index]);
-    }
-    const display_rect rect = rtc_field_rect(field);
-    const bool selected = state.selected_field == field;
-    canvas().fill_rect(
-        rect,
-        selected ? display_color::black : display_color::white);
-    canvas().set_text_color(
-        selected ? display_color::white : display_color::black,
-        selected ? display_color::black : display_color::white);
-    canvas().set_text_alignment(display_text_alignment::middle_center);
-    canvas().set_text_size(RTC_FIELD_TEXT_SIZE);
-    canvas().draw_text(text, rect.left + rect.width / 2, rect.top + rect.height / 2);
-}
-
-void draw_rtc_editor(const rtc_view_state& state)
-{
-    canvas().fill_rect(
-        0,
-        RTC_EDITOR_REGION_TOP,
-        canvas().width(),
-        RTC_EDITOR_REGION_HEIGHT,
-        display_color::white);
-    constexpr rtc_edit_field fields[] = {
-        rtc_edit_field::year, rtc_edit_field::month, rtc_edit_field::day,
-        rtc_edit_field::hour, rtc_edit_field::minute, rtc_edit_field::second,
-    };
-    for (const rtc_edit_field field : fields) {
-        draw_rtc_field(state, field);
-    }
-    canvas().set_text_color(display_color::black, display_color::white);
-    canvas().set_text_alignment(display_text_alignment::middle_center);
-    canvas().set_text_size(RTC_FIELD_TEXT_SIZE);
-    canvas().draw_text(":", 231, RTC_DATE_FIELD_TOP + RTC_FIELD_HEIGHT / 2);
-    canvas().draw_text(":", 285, RTC_DATE_FIELD_TOP + RTC_FIELD_HEIGHT / 2);
-    canvas().draw_text(":", 213, RTC_TIME_FIELD_TOP + RTC_FIELD_HEIGHT / 2);
-    canvas().draw_text(":", 267, RTC_TIME_FIELD_TOP + RTC_FIELD_HEIGHT / 2);
-    draw_centered_line(rtc_message_text(state), RTC_MESSAGE_CENTER_Y, RTC_MESSAGE_TEXT_SIZE);
-}
-
-bool rtc_keys_enabled(const rtc_view_state& state)
-{
-    return state.rtc_available && !state.loading && !state.saving;
-}
-
-void draw_rtc_key(std::uint8_t index, bool pressed, bool enabled)
-{
-    if (index >= RTC_KEY_COUNT) {
-        return;
-    }
-    const display_rect rect = rtc_key_rect(index);
-    const bool active_pressed = pressed && enabled;
-    const display_color background =
-        active_pressed ? display_color::black : display_color::white;
-    const display_color foreground =
-        active_pressed ? display_color::white : display_color::black;
-    draw_action_background(rect, active_pressed, enabled);
-    canvas().draw_horizontal_line(rect.left, rect.top, rect.width, display_color::black);
-    canvas().draw_horizontal_line(
-        rect.left,
-        rect.top + rect.height - 1,
-        rect.width,
-        display_color::black);
-    const std::int32_t center_x = rect.left + rect.width / 2;
-    const std::int32_t center_y = rect.top + rect.height / 2;
-    canvas().set_text_color(foreground, background);
-    canvas().set_text_alignment(display_text_alignment::middle_center);
-    canvas().set_text_size(RTC_KEY_TEXT_SIZE);
-    if (index == 9U) {
-        canvas().draw_line(center_x - 18, center_y, center_x - 5, center_y + 13, foreground);
-        canvas().draw_line(center_x - 5, center_y + 13, center_x + 20, center_y - 16, foreground);
-    } else if (index == 11U) {
-        canvas().draw_line(center_x - 22, center_y, center_x + 22, center_y, foreground);
-        canvas().draw_line(center_x - 22, center_y, center_x - 7, center_y - 14, foreground);
-        canvas().draw_line(center_x - 22, center_y, center_x - 7, center_y + 14, foreground);
-    } else {
-        constexpr const char* labels[] = {
-            "7", "8", "9", "4", "5", "6", "1", "2", "3", "", "0", "",
-        };
-        canvas().draw_text(labels[index], center_x, center_y);
-    }
-}
-
-void draw_test_content(const test_view_state& state)
-{
-    canvas().fill_rect(
-        0,
-        TEST_CONTENT_REGION_TOP,
-        canvas().width(),
-        TEST_CONTENT_REGION_HEIGHT,
-        display_color::white);
-    canvas().set_text_color(display_color::black, display_color::white);
-    draw_centered_line(
-        state.text_state == test_text_state::hi_xi ? "HI XI" : "Hello world", 340, 4U);
-    char line[80] = {};
-    if (state.touch_type == test_touch_display_type::click) {
-        std::snprintf(
-            line, sizeof(line), "Click (%d, %d)  %lu ms", state.end_x, state.end_y,
-            static_cast<unsigned long>(state.duration_ms));
-        draw_centered_line(line, 460, 2U);
-    } else if (state.touch_type == test_touch_display_type::long_press) {
-        std::snprintf(
-            line, sizeof(line), "Start (%d, %d)", state.start_x, state.start_y);
-        draw_centered_line(line, 440, 2U);
-        std::snprintf(
-            line, sizeof(line), "End (%d, %d)  %lu ms", state.end_x, state.end_y,
-            static_cast<unsigned long>(state.duration_ms));
-        draw_centered_line(line, 490, 2U);
-    }
-}
-
-void draw_battery_content(const battery_view_state& state)
-{
-    canvas().fill_rect(
-        0,
-        BATTERY_CONTENT_REGION_TOP,
-        canvas().width(),
-        BATTERY_CONTENT_REGION_HEIGHT,
-        display_color::white);
-    if (state.loading) {
-        canvas().set_text_color(display_color::black, display_color::white);
-        draw_centered_line("Loading...", BATTERY_FIRST_ROW_CENTER_Y, 2U);
-        return;
-    }
-    char value[32] = {};
-    constexpr const char* labels[] = {"Level", "Voltage", "Current", "Status"};
-    for (std::uint8_t row = 0U; row < 4U; ++row) {
-        if (row == 0U) {
-            std::snprintf(value, sizeof(value), state.level_valid ? "%u %%" : "--", state.percent);
-        } else if (row == 1U) {
-            std::snprintf(
-                value, sizeof(value), state.voltage_valid ? "%.2f V" : "--",
-                static_cast<double>(state.voltage_mv) / 1000.0);
-        } else if (row == 2U) {
-            std::snprintf(value, sizeof(value), state.current_valid ? "%ld mA" : "--",
-                          static_cast<long>(state.current_ma));
-        } else {
-            std::snprintf(
-                value, sizeof(value), "%s",
-                state.charging_valid ? (state.charging ? "Charging" : "Not charging") : "Unknown");
-        }
-        const std::int32_t y = BATTERY_FIRST_ROW_CENTER_Y + row * BATTERY_ROW_HEIGHT;
-        canvas().set_text_color(display_color::black, display_color::white);
-        canvas().set_text_size(BATTERY_ROW_TEXT_SIZE);
-        canvas().set_text_alignment(display_text_alignment::middle_left);
-        canvas().draw_text(labels[row], BATTERY_LABEL_LEFT, y);
-        canvas().set_text_alignment(display_text_alignment::middle_right);
-        canvas().draw_text(value, BATTERY_VALUE_RIGHT, y);
-    }
-}
-
-const char* file_status_text(file_view_status status)
-{
-    switch (status) {
-        case file_view_status::no_card:
-            return "SD card not inserted";
-        case file_view_status::mounting:
-            return "Reading SD card...";
-        case file_view_status::loading:
-            return "Loading...";
-        case file_view_status::error:
-            return "SD card error - reinsert card";
-        case file_view_status::directory_error:
-            return "Unable to read directory";
-        case file_view_status::directory_too_large:
-            return "Directory has too many entries";
-        case file_view_status::path_too_long:
-            return "Path is too long";
-        case file_view_status::ready:
-            return "";
-    }
-    return "";
-}
-
-void draw_file_row(const file_view_state& state, std::uint8_t index, bool pressed)
-{
-    if (index >= state.row_count) {
-        return;
-    }
-    const display_rect rect = file_row_rect(index);
-    const file_row_view_state& row = state.rows[index];
-    const bool active_pressed = pressed && row.enabled;
-    const display_color background =
-        active_pressed ? display_color::black : display_color::white;
-    const display_color foreground =
-        active_pressed ? display_color::white : display_color::black;
-    draw_action_background(rect, active_pressed, row.enabled);
-    canvas().set_font(display_font::cjk_24);
-    canvas().set_text_size(FILE_ROW_TEXT_SIZE);
-    canvas().set_text_alignment(display_text_alignment::middle_left);
-    canvas().set_text_color(foreground, background);
-    char name[FILE_VIEW_NAME_LENGTH + 4U] = {};
-    std::snprintf(name, sizeof(name), "%s%s", row.name, row.name_truncated ? "..." : "");
-    while (canvas().text_width(name) > rect.width - 36 && std::strlen(name) > 3U) {
-        const std::size_t length = std::strlen(name);
-        std::size_t cut = length - 4U;
-        while (cut > 0U && (static_cast<unsigned char>(name[cut]) & 0xc0U) == 0x80U) {
-            --cut;
-        }
-        std::memcpy(name + cut, "...", 4U);
-    }
-    canvas().draw_text(name, rect.left + 4, rect.top + rect.height / 2);
-    if (row.directory) {
-        canvas().set_text_alignment(display_text_alignment::middle_right);
-        canvas().draw_text(">", rect.left + rect.width - 4, rect.top + rect.height / 2);
-    }
-    canvas().set_font(display_font::default_font);
-}
-
-bool file_page_button_enabled(const file_view_state& state, bool next)
-{
-    return next ? state.page_index + 1U < state.page_count
-                : state.page_index > 0U;
-}
-
-void draw_file_page_button(
-    const file_view_state& state,
-    bool next,
-    bool pressed)
-{
-    const display_rect rect = next ? file_next_page_rect() : file_previous_page_rect();
-    const bool enabled = file_page_button_enabled(state, next);
-    const bool active_pressed = pressed && enabled;
-    const display_color background =
-        active_pressed ? display_color::black : display_color::white;
-    const display_color foreground =
-        active_pressed ? display_color::white : display_color::black;
-    draw_action_background(rect, active_pressed, enabled);
-    if (!enabled) {
-        return;
-    }
-    canvas().set_text_color(foreground, background);
-    canvas().set_text_alignment(display_text_alignment::middle_center);
-    canvas().set_text_size(FILE_PAGE_BUTTON_TEXT_SIZE);
-    canvas().draw_text(
-        next ? ">" : "<",
-        rect.left + rect.width / 2,
-        rect.top + rect.height / 2);
-}
-
-void draw_file_content(const file_view_state& state)
-{
-    canvas().fill_rect(
-        0,
-        FILE_CONTENT_REGION_TOP,
-        canvas().width(),
-        FILE_CONTENT_REGION_HEIGHT,
-        display_color::white);
-    canvas().set_font(display_font::cjk_24);
-    canvas().set_text_size(1U);
-    canvas().set_text_color(display_color::black, display_color::white);
-    canvas().set_text_alignment(display_text_alignment::middle_left);
-    canvas().draw_text(state.path, FILE_PATH_LEFT, FILE_PATH_TOP + FILE_PATH_HEIGHT / 2);
-    canvas().draw_horizontal_line(
-        FILE_PATH_LEFT,
-        FILE_PATH_TOP + FILE_PATH_HEIGHT,
-        UI_DISPLAY_WIDTH - FILE_PATH_LEFT * 2,
-        display_color::black);
-    canvas().set_font(display_font::default_font);
-    if (state.status == file_view_status::ready) {
-        for (std::uint8_t index = 0U; index < state.row_count; ++index) {
-            draw_file_row(state, index, false);
-        }
-        draw_file_page_button(state, false, false);
-        draw_file_page_button(state, true, false);
-        char page[24] = {};
-        std::snprintf(page, sizeof(page), "Page %u/%u", state.page_index + 1U, state.page_count);
-        canvas().set_text_color(display_color::black, display_color::white);
-        canvas().set_text_alignment(display_text_alignment::middle_center);
-        canvas().set_text_size(FILE_PAGE_LABEL_TEXT_SIZE);
-        canvas().draw_text(
-            page,
-            canvas().width() / 2,
-            FILE_PAGINATION_TOP + FILE_PAGINATION_HEIGHT / 2);
-    } else {
-        canvas().set_text_color(display_color::black, display_color::white);
-        draw_centered_line(file_status_text(state.status), 360, 2U);
-    }
-    if (state.popup_visible) {
-        canvas().fill_rect(
-            FILE_POPUP_LEFT,
-            FILE_POPUP_TOP,
-            FILE_POPUP_WIDTH,
-            FILE_POPUP_HEIGHT,
-            display_color::white);
-        canvas().draw_rect(
-            FILE_POPUP_LEFT,
-            FILE_POPUP_TOP,
-            FILE_POPUP_WIDTH,
-            FILE_POPUP_HEIGHT,
-            display_color::black);
-        canvas().set_text_color(display_color::black, display_color::white);
-        draw_centered_line("File preview is not supported", FILE_POPUP_TOP + FILE_POPUP_HEIGHT / 2,
-                           FILE_POPUP_TEXT_SIZE);
-    }
-}
-
 void draw_full_view(
     const display_request& request,
     std::uint8_t selected_light,
@@ -745,33 +302,20 @@ void draw_full_view(
     canvas().set_text_color(display_color::black, display_color::white);
     switch (request.view) {
         case ui_view_id::menu:
-            draw_centered_line(PROJECT_NAME, MENU_TITLE_CENTER_Y, MENU_TITLE_TEXT_SIZE);
-            for (std::uint8_t index = 0U; index < MENU_ENTRY_COUNT; ++index) {
-                draw_menu_entry(index, false);
-            }
+            paper_mono_views::draw_menu_view(canvas(), request.payload.menu);
             break;
         case ui_view_id::test:
-            draw_front_light_bar(selected_light, pressed_light);
-            draw_back_button(request.view, false);
-            draw_test_content(request.test);
+            paper_mono_views::draw_test_view(
+                canvas(), request.payload.test, selected_light, pressed_light);
             break;
         case ui_view_id::rtc_setting:
-            draw_back_button(request.view, false);
-            draw_centered_line("RTC Setting", RTC_TITLE_CENTER_Y, RTC_TITLE_TEXT_SIZE);
-            draw_rtc_editor(request.rtc);
-            for (std::uint8_t index = 0U; index < RTC_KEY_COUNT; ++index) {
-                draw_rtc_key(index, false, rtc_keys_enabled(request.rtc));
-            }
+            paper_mono_views::draw_rtc_view(canvas(), request.payload.rtc);
             break;
         case ui_view_id::battery:
-            draw_back_button(request.view, false);
-            draw_centered_line("Battery", BATTERY_TITLE_CENTER_Y, BATTERY_TITLE_TEXT_SIZE);
-            draw_battery_content(request.battery);
+            paper_mono_views::draw_battery_view(canvas(), request.payload.battery);
             break;
         case ui_view_id::file:
-            draw_back_button(request.view, false);
-            draw_centered_line("Files", FILE_TITLE_CENTER_Y, FILE_TITLE_TEXT_SIZE);
-            draw_file_content(request.file);
+            paper_mono_views::draw_file_view(canvas(), request.payload.file);
             break;
     }
 }
@@ -805,29 +349,31 @@ void draw_partial_request(const display_request& request, display_rect& rect)
     switch (request.update_region) {
         case display_update_region::rtc_editor:
         case display_update_region::rtc_editor_and_key:
-            draw_rtc_editor(request.rtc);
+            paper_mono_views::draw_rtc_editor(canvas(), request.payload.rtc);
             for (std::uint8_t index = 0U; index < RTC_KEY_COUNT; ++index) {
                 if ((request.released_key_mask & (1U << index)) != 0U) {
-                    draw_rtc_key(
+                    paper_mono_views::draw_rtc_key(
+                        canvas(),
                         index,
                         false,
-                        rtc_keys_enabled(request.rtc));
+                        paper_mono_views::rtc_keys_enabled(request.payload.rtc));
                     rect = merged_rect(rect, rtc_key_rect(index));
                 }
             }
             break;
         case display_update_region::test_content:
-            draw_test_content(request.test);
+            paper_mono_views::draw_test_content(canvas(), request.payload.test);
             break;
         case display_update_region::battery_content:
-            draw_battery_content(request.battery);
+            paper_mono_views::draw_battery_content(canvas(), request.payload.battery);
             break;
         case display_update_region::file_content:
-            draw_file_content(request.file);
+            paper_mono_views::draw_file_content(canvas(), request.payload.file);
             break;
         case display_update_region::control:
             if (request.view == ui_view_id::test) {
-                draw_front_light_bar(request.test.front_light_level, no_pressed_button);
+                paper_mono_views::draw_front_light_bar(
+                    canvas(), request.payload.test.front_light_level, no_pressed_button);
             }
             break;
         case display_update_region::full:
@@ -844,28 +390,35 @@ display_rect draw_control(
 {
     switch (request.control) {
         case ui_control_type::front_light:
-            draw_front_light_bar(selected_light, pressed_light);
+            paper_mono_views::draw_front_light_bar(
+                canvas(), selected_light, pressed_light);
             return {0, 0, UI_DISPLAY_WIDTH, FRONT_LIGHT_BAR_HEIGHT};
         case ui_control_type::menu_entry:
-            draw_menu_entry(request.index, request.pressed);
+            paper_mono_views::draw_menu_entry(
+                canvas(), latest.payload.menu, request.index, request.pressed);
             return menu_entry_rect(request.index);
         case ui_control_type::navigate_back:
-            draw_back_button(latest.view, request.pressed);
-            return back_button_rect(latest.view);
+            paper_mono_views::draw_back_button(
+                canvas(), latest.view, request.pressed);
+            return app_back_button_rect(latest.view);
         case ui_control_type::rtc_key:
-            draw_rtc_key(
+            paper_mono_views::draw_rtc_key(
+                canvas(),
                 request.index,
                 request.pressed,
-                rtc_keys_enabled(latest.rtc));
+                paper_mono_views::rtc_keys_enabled(latest.payload.rtc));
             return rtc_key_rect(request.index);
         case ui_control_type::file_row:
-            draw_file_row(latest.file, request.index, request.pressed);
+            paper_mono_views::draw_file_row(
+                canvas(), latest.payload.file, request.index, request.pressed);
             return file_row_rect(request.index);
         case ui_control_type::file_previous_page:
-            draw_file_page_button(latest.file, false, request.pressed);
+            paper_mono_views::draw_file_page_button(
+                canvas(), latest.payload.file, false, request.pressed);
             return file_previous_page_rect();
         case ui_control_type::file_next_page:
-            draw_file_page_button(latest.file, true, request.pressed);
+            paper_mono_views::draw_file_page_button(
+                canvas(), latest.payload.file, true, request.pressed);
             return file_next_page_rect();
         case ui_control_type::none:
         case ui_control_type::rtc_field:
@@ -882,25 +435,27 @@ bool queued_not_after(std::uint32_t left, std::uint32_t right)
 
 bool control_replaced_by_frame(
     const display_control_request& control,
-    const display_request& frame)
+    const display_request& frame,
+    refresh_mode frame_mode,
+    display_update_region frame_region)
 {
     if (!queued_not_after(control.queued_at_ms, frame.queued_at_ms)) {
         return false;
     }
-    if (frame.mode == refresh_mode::quality ||
-        frame.update_region == display_update_region::full) {
+    if (frame_mode == refresh_mode::quality ||
+        frame_region == display_update_region::full) {
         return true;
     }
     if (control.control == ui_control_type::rtc_key &&
         frame.view == ui_view_id::rtc_setting &&
-        frame.update_region == display_update_region::rtc_editor_and_key &&
+        frame_region == display_update_region::rtc_editor_and_key &&
         control.index < RTC_KEY_COUNT &&
         (frame.released_key_mask & (1U << control.index)) != 0U) {
         return true;
     }
     if (control.control == ui_control_type::front_light &&
         frame.view == ui_view_id::test &&
-        frame.update_region == display_update_region::control) {
+        frame_region == display_update_region::control) {
         return true;
     }
     const bool file_control =
@@ -908,7 +463,7 @@ bool control_replaced_by_frame(
         control.control == ui_control_type::file_previous_page ||
         control.control == ui_control_type::file_next_page;
     return file_control && frame.view == ui_view_id::file &&
-           frame.update_region == display_update_region::file_content;
+           frame_region == display_update_region::file_content;
 }
 
 void process_control_request(
@@ -956,26 +511,99 @@ void process_control_request(
         static_cast<unsigned long>(monotonic_ms() - start_ms));
 }
 
-bool submit_request(const display_request& request)
+bool release_frame(ui_frame_handle& handle, const char* owner)
+{
+    if (!ui_frame_handle_is_valid(handle)) {
+        return true;
+    }
+    if (ui_frame_pool_release(handle)) {
+        return true;
+    }
+    ESP_LOGE(log_tag, "frame release failed owner=%s", owner);
+    return false;
+}
+
+bool reclaim_queued_frame(bool& quality_pending)
 {
     if (request_queue == nullptr) {
         return false;
     }
-    display_request queued = request;
-    queued.queued_at_ms = monotonic_ms();
-    if (xQueueSend(request_queue, &queued, 0) != pdTRUE) {
-        display_request discarded = {};
-        if (xQueueReceive(request_queue, &discarded, 0) != pdTRUE) {
-            return false;
-        }
-        if (discarded.mode == refresh_mode::quality) {
-            queued.mode = refresh_mode::quality;
-            queued.update_region = display_update_region::full;
-        }
-        if (xQueueSend(request_queue, &queued, 0) != pdTRUE) {
+    ui_frame_handle discarded = invalid_ui_frame_handle();
+    if (xQueueReceive(request_queue, &discarded, 0) != pdTRUE) {
+        return false;
+    }
+    const display_request* discarded_frame = nullptr;
+    if (ui_frame_pool_resolve(discarded, discarded_frame) &&
+        discarded_frame != nullptr) {
+        quality_pending = quality_pending ||
+                          discarded_frame->mode == refresh_mode::quality;
+    }
+    release_frame(discarded, "queue_reclaim");
+    return true;
+}
+
+bool acquire_request(
+    ui_view_id view,
+    ui_update_reason reason,
+    ui_frame_handle& handle,
+    display_request*& request)
+{
+    bool quality_pending = false;
+    if (!ui_frame_pool_acquire(handle, request)) {
+        if (!reclaim_queued_frame(quality_pending) ||
+            !ui_frame_pool_acquire(handle, request)) {
+            const ui_frame_pool_stats stats = ui_frame_pool_get_stats();
+            ESP_LOGW(
+                log_tag,
+                "frame pool exhausted active=%u peak=%u",
+                stats.active_count,
+                stats.peak_active_count);
             return false;
         }
     }
+    request->view_generation = ui_presentation_prepare_frame(
+        view,
+        reason == ui_update_reason::view_opened);
+    request->view = view;
+    request->mode = reason == ui_update_reason::view_opened || quality_pending
+                        ? refresh_mode::quality
+                        : refresh_mode::fastest;
+    request->update_region = reason == ui_update_reason::view_opened || quality_pending
+                                 ? display_update_region::full
+                                 : display_update_region::control;
+    request->allow_quality_cleanup = true;
+    return true;
+}
+
+bool submit_request(
+    ui_frame_handle& handle,
+    display_request& request)
+{
+    if (request_queue == nullptr || renderer_task_handle == nullptr) {
+        release_frame(handle, "submit_unavailable");
+        return false;
+    }
+    request.queued_at_ms = monotonic_ms();
+    if (uxQueueSpacesAvailable(request_queue) == 0U) {
+        bool quality_pending = false;
+        if (!reclaim_queued_frame(quality_pending)) {
+            release_frame(handle, "submit_queue_full");
+            return false;
+        }
+        if (quality_pending) {
+            request.mode = refresh_mode::quality;
+            request.update_region = display_update_region::full;
+        }
+    }
+    if (!ui_frame_pool_publish(handle)) {
+        release_frame(handle, "publish_failure");
+        return false;
+    }
+    if (xQueueSend(request_queue, &handle, 0) != pdTRUE) {
+        release_frame(handle, "submit_race_failure");
+        return false;
+    }
+    handle = invalid_ui_frame_handle();
     xTaskNotifyGive(renderer_task_handle);
     return true;
 }
@@ -983,8 +611,8 @@ bool submit_request(const display_request& request)
 void renderer_task(void*)
 {
     ghost_debt debt = {};
-    display_request latest = {};
-    latest.view = ui_view_id::menu;
+    ui_frame_handle latest_handle = invalid_ui_frame_handle();
+    const display_request* latest = nullptr;
     std::uint8_t selected_light = FRONT_LIGHT_DEFAULT_LEVEL_INDEX;
     std::int16_t pressed_light = no_pressed_button;
     status_bar_view_state displayed_status = {};
@@ -998,16 +626,29 @@ void renderer_task(void*)
             if (!hal_display_sleep()) {
                 ESP_LOGW(log_tag, "idle display sleep failed");
             }
+            monitor_renderer_stack();
             continue;
         }
 
-        display_request next = {};
+        ui_frame_handle next_handle = invalid_ui_frame_handle();
+        const display_request* next = nullptr;
         bool has_request = false;
         bool quality_pending = false;
-        display_request candidate = {};
+        ui_frame_handle candidate = invalid_ui_frame_handle();
         while (xQueueReceive(request_queue, &candidate, 0) == pdTRUE) {
-            quality_pending = quality_pending || candidate.mode == refresh_mode::quality;
-            next = candidate;
+            const display_request* candidate_frame = nullptr;
+            if (!ui_frame_pool_resolve(candidate, candidate_frame) ||
+                candidate_frame == nullptr) {
+                ESP_LOGE(log_tag, "queued frame handle is invalid");
+                candidate = invalid_ui_frame_handle();
+                continue;
+            }
+            quality_pending = quality_pending ||
+                              candidate_frame->mode == refresh_mode::quality;
+            release_frame(next_handle, "renderer_superseded");
+            next_handle = candidate;
+            next = candidate_frame;
+            candidate = invalid_ui_frame_handle();
             has_request = true;
         }
 
@@ -1017,13 +658,16 @@ void renderer_task(void*)
                xQueueReceive(control_queue, &controls[control_count], 0) == pdTRUE) {
             ++control_count;
         }
-        if (has_request) {
-            if (quality_pending) {
-                next.mode = refresh_mode::quality;
-                next.update_region = display_update_region::full;
-            }
+        if (has_request && next != nullptr) {
+            const refresh_mode queued_mode = quality_pending
+                                                 ? refresh_mode::quality
+                                                 : next->mode;
+            const display_update_region queued_region = quality_pending
+                                                            ? display_update_region::full
+                                                            : next->update_region;
             for (std::size_t index = 0U; index < control_count; ++index) {
-                if (!control_replaced_by_frame(controls[index], next)) {
+                if (!control_replaced_by_frame(
+                        controls[index], *next, queued_mode, queued_region)) {
                     continue;
                 }
                 if (controls[index].control == ui_control_type::front_light) {
@@ -1034,29 +678,28 @@ void renderer_task(void*)
                     "discard transient control=%u pressed=%d before frame view=%u",
                     static_cast<unsigned>(controls[index].control),
                     controls[index].pressed,
-                    static_cast<unsigned>(next.view));
+                    static_cast<unsigned>(next->view));
                 controls[index].control = ui_control_type::none;
             }
 
-            latest = next;
-            selected_light = latest.view == ui_view_id::test
-                                 ? latest.test.front_light_level
+            selected_light = next->view == ui_view_id::test
+                                 ? next->payload.test.front_light_level
                                  : selected_light;
             const refresh_mode requested_mode =
-                debt.status_cleanup_pending ? refresh_mode::quality : next.mode;
+                debt.status_cleanup_pending ? refresh_mode::quality : queued_mode;
             refresh_mode mode = resolve_mode(
                 requested_mode,
-                next.update_region,
-                next.allow_quality_cleanup,
+                queued_region,
+                next->allow_quality_cleanup,
                 debt);
-            display_rect rect = content_rect(next.update_region);
+            display_rect rect = content_rect(queued_region);
             const std::uint32_t draw_start_ms = monotonic_ms();
             if (!has_frame || mode == refresh_mode::quality ||
-                next.update_region == display_update_region::full) {
-                draw_full_view(next, selected_light, pressed_light);
+                queued_region == display_update_region::full) {
+                draw_full_view(*next, selected_light, pressed_light);
                 rect = {0, 0, UI_DISPLAY_WIDTH, UI_DISPLAY_HEIGHT};
             } else {
-                draw_partial_request(next, rect);
+                draw_partial_request(*next, rect);
             }
             const status_bar_view_state status = status_bar_get_state();
             if (!status_displayed || !status_states_equal(status, displayed_status) ||
@@ -1068,16 +711,21 @@ void renderer_task(void*)
             }
             const std::uint32_t refresh_start_ms = monotonic_ms();
             const display_refresh_result refresh =
-                commit_refresh(debt, rect, mode, next.update_region);
+                commit_refresh(debt, rect, mode, queued_region);
             has_frame = refresh.success;
             status_displayed = refresh.success;
             if (refresh.success) {
-                ui_presentation_commit_frame(
-                    next.view,
-                    next.view_generation,
-                    next.view == ui_view_id::file ? &next.file : nullptr,
-                    next.view == ui_view_id::rtc_setting &&
-                        rtc_keys_enabled(next.rtc));
+                const bool presentation_committed = ui_presentation_commit_frame(
+                    next_handle,
+                    next->view == ui_view_id::rtc_setting &&
+                        paper_mono_views::rtc_keys_enabled(next->payload.rtc));
+                if (!presentation_committed) {
+                    ESP_LOGE(log_tag, "presented frame commit failed");
+                }
+                release_frame(latest_handle, "renderer_previous_latest");
+                latest_handle = next_handle;
+                latest = next;
+                next_handle = invalid_ui_frame_handle();
             }
             ESP_LOGI(
                 log_tag,
@@ -1085,27 +733,32 @@ void renderer_task(void*)
                 refresh_mode_name(mode),
                 refresh_mode_name(refresh.actual_mode),
                 refresh.success,
-                static_cast<unsigned>(next.view),
-                static_cast<unsigned long>(next.view_generation),
-                static_cast<unsigned>(next.update_region),
-                static_cast<unsigned long>(draw_start_ms - next.queued_at_ms),
+                static_cast<unsigned>(next->view),
+                static_cast<unsigned long>(next->view_generation),
+                static_cast<unsigned>(queued_region),
+                static_cast<unsigned long>(draw_start_ms - next->queued_at_ms),
                 static_cast<unsigned long>(refresh_start_ms - draw_start_ms),
                 static_cast<unsigned long>(monotonic_ms() - refresh_start_ms));
+            if (!refresh.success) {
+                release_frame(next_handle, "renderer_refresh_failure");
+            }
         }
 
         for (std::size_t index = 0U; index < control_count; ++index) {
             if (controls[index].control == ui_control_type::none) {
                 continue;
             }
-            process_control_request(
-                controls[index],
-                latest,
-                debt,
-                selected_light,
-                pressed_light,
-                displayed_status,
-                status_displayed,
-                has_frame);
+            if (latest != nullptr) {
+                process_control_request(
+                    controls[index],
+                    *latest,
+                    debt,
+                    selected_light,
+                    pressed_light,
+                    displayed_status,
+                    status_displayed,
+                    has_frame);
+            }
         }
 
         const status_bar_view_state status = status_bar_get_state();
@@ -1121,31 +774,15 @@ void renderer_task(void*)
                 status_displayed = true;
             }
         }
+        monitor_renderer_stack();
     }
-}
-
-display_request make_request(ui_view_id view, ui_update_reason reason)
-{
-    display_request request = {};
-    request.view_generation = ui_presentation_prepare_frame(
-        view,
-        reason == ui_update_reason::view_opened);
-    request.view = view;
-    request.mode = reason == ui_update_reason::view_opened
-                       ? refresh_mode::quality
-                       : refresh_mode::fastest;
-    request.update_region = reason == ui_update_reason::view_opened
-                                ? display_update_region::full
-                                : display_update_region::control;
-    request.allow_quality_cleanup = true;
-    return request;
 }
 
 }  // namespace
 
 esp_err_t ui_renderer_init()
 {
-    request_queue = xQueueCreate(DISPLAY_REQUEST_QUEUE_LENGTH, sizeof(display_request));
+    request_queue = xQueueCreate(DISPLAY_REQUEST_QUEUE_LENGTH, sizeof(ui_frame_handle));
     control_queue = xQueueCreate(DISPLAY_CONTROL_QUEUE_LENGTH, sizeof(display_control_request));
     if (request_queue == nullptr || control_queue == nullptr) {
         return ESP_ERR_NO_MEM;
@@ -1154,28 +791,43 @@ esp_err_t ui_renderer_init()
                     DISPLAY_TASK_PRIORITY, &renderer_task_handle) != pdPASS) {
         return ESP_ERR_NO_MEM;
     }
-    ESP_LOGI(log_tag, "PaperMono renderer started");
+    ESP_LOGI(
+        log_tag,
+        "PaperMono renderer started frame_size=%u pool_capacity=%u",
+        static_cast<unsigned>(sizeof(display_request)),
+        UI_FRAME_POOL_CAPACITY);
     return ESP_OK;
 }
 
-bool ui_render_menu(const menu_view_state&, ui_update_reason reason)
+bool ui_render_menu(const menu_view_state& state, ui_update_reason reason)
 {
-    return submit_request(make_request(ui_view_id::menu, reason));
+    ui_frame_handle handle = invalid_ui_frame_handle();
+    display_request* request = nullptr;
+    if (!acquire_request(ui_view_id::menu, reason, handle, request) || request == nullptr) {
+        return false;
+    }
+    request->payload.menu = state;
+    return submit_request(handle, *request);
 }
 
 bool ui_render_test(const test_view_state& state, ui_update_reason reason)
 {
-    display_request request = make_request(ui_view_id::test, reason);
-    request.test = state;
-    if (reason != ui_update_reason::view_opened) {
-        const bool light_selection = reason == ui_update_reason::selection_changed;
-        request.mode = light_selection || state.touch_type != test_touch_display_type::click
-                           ? refresh_mode::fastest
-                           : refresh_mode::fast;
-        request.update_region = light_selection ? display_update_region::control
-                                                : display_update_region::test_content;
+    ui_frame_handle handle = invalid_ui_frame_handle();
+    display_request* request = nullptr;
+    if (!acquire_request(ui_view_id::test, reason, handle, request) || request == nullptr) {
+        return false;
     }
-    return submit_request(request);
+    request->payload.test = state;
+    if (reason != ui_update_reason::view_opened &&
+        request->mode != refresh_mode::quality) {
+        const bool light_selection = reason == ui_update_reason::selection_changed;
+        request->mode = light_selection || state.touch_type != test_touch_display_type::click
+                            ? refresh_mode::fastest
+                            : refresh_mode::fast;
+        request->update_region = light_selection ? display_update_region::control
+                                                 : display_update_region::test_content;
+    }
+    return submit_request(handle, *request);
 }
 
 bool ui_render_rtc(
@@ -1184,38 +836,54 @@ bool ui_render_rtc(
     ui_control_type released_control,
     std::uint8_t released_index)
 {
-    display_request request = make_request(ui_view_id::rtc_setting, reason);
-    request.rtc = state;
-    if (reason != ui_update_reason::view_opened) {
-        request.update_region = released_control == ui_control_type::rtc_key
-                                    ? display_update_region::rtc_editor_and_key
-                                    : display_update_region::rtc_editor;
+    ui_frame_handle handle = invalid_ui_frame_handle();
+    display_request* request = nullptr;
+    if (!acquire_request(ui_view_id::rtc_setting, reason, handle, request) ||
+        request == nullptr) {
+        return false;
+    }
+    request->payload.rtc = state;
+    if (reason != ui_update_reason::view_opened &&
+        request->mode != refresh_mode::quality) {
+        request->update_region = released_control == ui_control_type::rtc_key
+                                     ? display_update_region::rtc_editor_and_key
+                                     : display_update_region::rtc_editor;
         if (released_control == ui_control_type::rtc_key && released_index < RTC_KEY_COUNT) {
-            request.released_key_mask = static_cast<std::uint16_t>(1U << released_index);
+            request->released_key_mask = static_cast<std::uint16_t>(1U << released_index);
         }
     }
-    return submit_request(request);
+    return submit_request(handle, *request);
 }
 
 bool ui_render_battery(const battery_view_state& state, ui_update_reason reason)
 {
-    display_request request = make_request(ui_view_id::battery, reason);
-    request.battery = state;
-    if (reason != ui_update_reason::view_opened) {
-        request.update_region = display_update_region::battery_content;
+    ui_frame_handle handle = invalid_ui_frame_handle();
+    display_request* request = nullptr;
+    if (!acquire_request(ui_view_id::battery, reason, handle, request) || request == nullptr) {
+        return false;
     }
-    return submit_request(request);
+    request->payload.battery = state;
+    if (reason != ui_update_reason::view_opened &&
+        request->mode != refresh_mode::quality) {
+        request->update_region = display_update_region::battery_content;
+    }
+    return submit_request(handle, *request);
 }
 
 bool ui_render_file(const file_view_state& state, ui_update_reason reason)
 {
-    display_request request = make_request(ui_view_id::file, reason);
-    request.file = state;
-    if (reason != ui_update_reason::view_opened) {
-        request.mode = refresh_mode::text;
-        request.update_region = display_update_region::file_content;
+    ui_frame_handle handle = invalid_ui_frame_handle();
+    display_request* request = nullptr;
+    if (!acquire_request(ui_view_id::file, reason, handle, request) || request == nullptr) {
+        return false;
     }
-    return submit_request(request);
+    request->payload.file = state;
+    if (reason != ui_update_reason::view_opened &&
+        request->mode != refresh_mode::quality) {
+        request->mode = refresh_mode::text;
+        request->update_region = display_update_region::file_content;
+    }
+    return submit_request(handle, *request);
 }
 
 bool ui_render_control(ui_control_type control, std::uint8_t index, bool pressed)

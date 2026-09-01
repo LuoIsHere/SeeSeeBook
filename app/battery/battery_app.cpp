@@ -37,11 +37,6 @@ bool visible_change(const battery_snapshot& previous, const battery_snapshot& cu
 
 }  // namespace
 
-battery_app::battery_app()
-{
-    setAppInfo().name = "BatteryApp";
-}
-
 void battery_app::handle_app_event(const app_event& event)
 {
     if (event.type == app_event_type::ui_action &&

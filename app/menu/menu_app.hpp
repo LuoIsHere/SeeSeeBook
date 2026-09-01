@@ -5,8 +5,6 @@
 
 class menu_app final : public app_base {
 public:
-    menu_app();
-
     void handle_app_event(const app_event& event) override;
 
 protected:

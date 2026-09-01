@@ -66,11 +66,6 @@ file_view_status view_status(storage_state state)
 
 }  // namespace
 
-file_app::file_app()
-{
-    setAppInfo().name = "FileApp";
-}
-
 void file_app::handle_app_event(const app_event& event)
 {
     switch (event.type) {
@@ -121,6 +116,7 @@ void file_app::on_close()
     page_index_ = 0U;
     popup_visible_ = false;
     status_ = file_view_status::no_card;
+    view_ = {};
     ESP_LOGI(log_tag, "FileApp session cleared");
 }
 
@@ -265,9 +261,8 @@ void file_app::release_directory_result()
 
 void file_app::submit_frame(ui_update_reason reason)
 {
-    file_view_state view = {};
-    build_view(view);
-    if (!ui_render_file(view, reason)) {
+    build_view(view_);
+    if (!ui_render_file(view_, reason)) {
         ESP_LOGW(log_tag, "renderer queue unavailable");
     }
 }

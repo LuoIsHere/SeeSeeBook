@@ -8,6 +8,11 @@ class app_base : public mooncake::AppAbility {
 public:
     virtual void handle_app_event(const app_event& event) = 0;
 
+    void set_app_name(const char* name)
+    {
+        setAppInfo().name = name;
+    }
+
 protected:
     virtual void on_create() {}
     virtual void on_open() {}

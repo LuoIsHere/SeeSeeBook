@@ -16,6 +16,13 @@ enum class otp_refresh_kind : std::uint8_t {
     full_mono,
 };
 
+enum class otp_refresh_error : std::uint8_t {
+    none,
+    invalid_request,
+    internal_i2c_unavailable,
+    transport_failure,
+};
+
 struct otp_refresh_rect {
     std::uint16_t left;
     std::uint16_t top;
@@ -27,6 +34,7 @@ struct otp_refresh_result {
     bool success;
     otp_refresh_kind actual_kind;
     std::uint32_t duration_ms;
+    otp_refresh_error error;
 };
 
 // Initializes the SSD1677 and stores an invisible white differential baseline.

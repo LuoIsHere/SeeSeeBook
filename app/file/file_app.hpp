@@ -30,7 +30,6 @@ private:
     std::uint32_t requested_generation_ = 0U;
     std::uint32_t popup_started_ms_ = 0U;
     bool popup_visible_ = false;
-    file_view_state view_ = {};
 
     void handle_action(const ui_action_event& action);
     void handle_storage_status(const app_storage_status_event& event);
@@ -39,6 +38,9 @@ private:
     void activate_row(std::uint8_t row_index);
     void release_directory_result();
     void submit_frame(ui_update_reason reason);
+    static bool write_frame(
+        file_view_state& view,
+        const void* context);
     void build_view(file_view_state& view) const;
     std::uint16_t page_count() const;
 };

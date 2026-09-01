@@ -27,10 +27,18 @@ enum class display_text_alignment : std::uint8_t {
     middle_right,
 };
 
+enum class display_refresh_error : std::uint8_t {
+    none,
+    invalid_request,
+    hardware_control_unavailable,
+    transport_failure,
+};
+
 struct display_refresh_result {
     bool success;
     refresh_mode actual_mode;
     std::uint32_t duration_ms;
+    display_refresh_error error;
 };
 
 // Device-independent drawing surface backed by the active display driver.

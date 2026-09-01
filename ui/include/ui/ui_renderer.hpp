@@ -35,9 +35,17 @@ bool ui_render_rtc(
 bool ui_render_battery(
     const battery_view_state& state,
     ui_update_reason reason);
-bool ui_render_file(
-    const file_view_state& state,
-    ui_update_reason reason);
+
+using file_frame_writer = bool (*)(
+    file_view_state& state,
+    const void* context);
+
+// The writer is invoked synchronously before the frame is published. The
+// callback and context are never stored or passed to another task.
+bool ui_write_file_frame(
+    ui_update_reason reason,
+    file_frame_writer writer,
+    const void* context);
 
 // Control feedback is driven by the UI interaction middleware, not by Apps.
 bool ui_render_control(

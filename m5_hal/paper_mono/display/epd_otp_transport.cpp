@@ -44,6 +44,7 @@ std::uint8_t* staging_buffer = nullptr;
 bool initialized = false;
 bool writing = false;
 bool write_ok = false;
+transport_error current_error = transport_error::none;
 
 std::uint32_t monotonic_ms()
 {
@@ -56,6 +57,7 @@ void set_write_error(esp_err_t error, const char* operation)
         ESP_LOGE(log_tag, "%s failed: %s", operation, esp_err_to_name(error));
     }
     write_ok = false;
+    current_error = transport_error::spi_failure;
 }
 
 void transmit(
@@ -108,8 +110,19 @@ void transmit(
 
 }  // namespace
 
+void clear_error()
+{
+    current_error = transport_error::none;
+}
+
+transport_error last_error()
+{
+    return current_error;
+}
+
 bool init()
 {
+    clear_error();
     if (initialized) {
         return true;
     }
@@ -127,6 +140,7 @@ bool init()
     esp_err_t error = gpio_config(&output_config);
     if (error != ESP_OK) {
         ESP_LOGE(log_tag, "configure output GPIO failed: %s", esp_err_to_name(error));
+        current_error = transport_error::spi_failure;
         return false;
     }
     gpio_set_level(pin_cs, 1);
@@ -140,6 +154,7 @@ bool init()
     error = gpio_config(&busy_config);
     if (error != ESP_OK) {
         ESP_LOGE(log_tag, "configure BUSY GPIO failed: %s", esp_err_to_name(error));
+        current_error = transport_error::spi_failure;
         return false;
     }
 
@@ -163,6 +178,7 @@ bool init()
     error = spi_bus_initialize(spi_host, &bus_config, SPI_DMA_CH_AUTO);
     if (error != ESP_OK) {
         ESP_LOGE(log_tag, "spi_bus_initialize failed: %s", esp_err_to_name(error));
+        current_error = transport_error::spi_failure;
         return false;
     }
 
@@ -175,6 +191,7 @@ bool init()
     error = spi_bus_add_device(spi_host, &device_config, &spi_device);
     if (error != ESP_OK) {
         ESP_LOGE(log_tag, "spi_bus_add_device failed: %s", esp_err_to_name(error));
+        current_error = transport_error::spi_failure;
         spi_bus_free(spi_host);
         return false;
     }
@@ -184,6 +201,7 @@ bool init()
         MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
     if (staging_buffer == nullptr) {
         ESP_LOGE(log_tag, "allocate SPI staging buffer failed");
+        current_error = transport_error::spi_failure;
         spi_bus_remove_device(spi_device);
         spi_device = nullptr;
         spi_bus_free(spi_host);
@@ -206,6 +224,7 @@ bool begin_write()
             "invalid SPI session initialized=%d writing=%d",
             initialized,
             writing);
+        current_error = transport_error::spi_failure;
         return false;
     }
 
@@ -243,6 +262,7 @@ bool wait_ready(std::uint32_t timeout_ms)
                 log_tag,
                 "BUSY timeout after %lu ms",
                 static_cast<unsigned long>(timeout_ms));
+            current_error = transport_error::panel_timeout;
             return false;
         }
         vTaskDelay(pdMS_TO_TICKS(1U));
@@ -254,7 +274,11 @@ bool hardware_reset()
 {
     internal_i2c_guard bus_guard(PAPER_MONO_EPD_IOE_TIMEOUT_MS);
     if (!bus_guard.locked()) {
-        ESP_LOGE(log_tag, "EPD reset skipped; internal I2C bus busy");
+        current_error = transport_error::internal_i2c_unavailable;
+        ESP_LOGE(
+            log_tag,
+            "EPD reset skipped; internal I2C unavailable state=%u",
+            static_cast<unsigned>(hal_internal_i2c_get_state()));
         return false;
     }
 
@@ -268,12 +292,16 @@ bool hardware_reset()
         ioe.setDirection(PAPER_MONO_EPD_IOE_RESET, true) &&
         ioe.digitalWrite(PAPER_MONO_EPD_IOE_RESET, false);
     if (!enable_ready || !reset_ready) {
+        hal_internal_i2c_mark_fault();
+        current_error = transport_error::internal_i2c_unavailable;
         ESP_LOGE(log_tag, "configure M5IOE1 EPD pins failed");
         return false;
     }
 
     vTaskDelay(pdMS_TO_TICKS(PAPER_MONO_EPD_RESET_LOW_MS));
     if (!ioe.digitalWrite(PAPER_MONO_EPD_IOE_RESET, true)) {
+        hal_internal_i2c_mark_fault();
+        current_error = transport_error::internal_i2c_unavailable;
         ESP_LOGE(log_tag, "release EPD reset failed");
         return false;
     }

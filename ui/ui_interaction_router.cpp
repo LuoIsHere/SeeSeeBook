@@ -10,8 +10,6 @@ namespace {
 
 constexpr char log_tag[] = "ui_interaction";
 ui_view_id active_view = ui_view_id::menu;
-menu_view_state active_menu_view = {};
-file_view_state active_file_view = {};
 bool rtc_controls_enabled = false;
 ui_control_type captured_control = ui_control_type::none;
 std::uint8_t captured_index = 0U;
@@ -60,14 +58,19 @@ bool activated_action_replaces_release_feedback(ui_control_type control)
 bool hit_test(
     std::int16_t x,
     std::int16_t y,
+    const menu_view_state* menu_view,
+    const file_view_state* file_view,
     ui_control_type& control,
     std::uint8_t& index)
 {
     control = ui_control_type::none;
     index = 0U;
     if (active_view == ui_view_id::menu) {
+        if (menu_view == nullptr) {
+            return false;
+        }
         for (std::uint8_t entry = 0U;
-             entry < active_menu_view.entry_count &&
+             entry < menu_view->entry_count &&
              entry < menu_view_entry_capacity;
              ++entry) {
             if (point_in_rect(x, y, menu_entry_rect(entry))) {
@@ -127,19 +130,19 @@ bool hit_test(
     if (active_view != ui_view_id::file) {
         return false;
     }
-    if (active_file_view.status == file_view_status::ready) {
-        for (std::uint8_t row = 0U; row < active_file_view.row_count; ++row) {
-            if (active_file_view.rows[row].enabled && point_in_rect(x, y, file_row_rect(row))) {
+    if (file_view != nullptr && file_view->status == file_view_status::ready) {
+        for (std::uint8_t row = 0U; row < file_view->row_count; ++row) {
+            if (file_view->rows[row].enabled && point_in_rect(x, y, file_row_rect(row))) {
                 control = ui_control_type::file_row;
                 index = row;
                 return true;
             }
         }
-        if (active_file_view.page_index > 0U && point_in_rect(x, y, file_previous_page_rect())) {
+        if (file_view->page_index > 0U && point_in_rect(x, y, file_previous_page_rect())) {
             control = ui_control_type::file_previous_page;
             return true;
         }
-        if (active_file_view.page_index + 1U < active_file_view.page_count &&
+        if (file_view->page_index + 1U < file_view->page_count &&
             point_in_rect(x, y, file_next_page_rect())) {
             control = ui_control_type::file_next_page;
             return true;
@@ -150,10 +153,42 @@ bool hit_test(
 
 bool same_captured_control(std::int16_t x, std::int16_t y)
 {
-    ui_control_type control = ui_control_type::none;
-    std::uint8_t index = 0U;
-    return hit_test(x, y, control, index) && control == captured_control &&
-           index == captured_index;
+    switch (captured_control) {
+        case ui_control_type::navigate_back:
+            return point_in_rect(x, y, app_back_button_rect(active_view));
+        case ui_control_type::menu_entry:
+            return captured_index < menu_view_entry_capacity &&
+                   point_in_rect(x, y, menu_entry_rect(captured_index));
+        case ui_control_type::front_light:
+            return captured_index < FRONT_LIGHT_LEVEL_COUNT &&
+                   point_in_rect(x, y, front_light_button_rect(captured_index));
+        case ui_control_type::rtc_field:
+            return captured_index >= static_cast<std::uint8_t>(rtc_edit_field::year) &&
+                   captured_index <= static_cast<std::uint8_t>(rtc_edit_field::second) &&
+                   point_in_rect(
+                       x,
+                       y,
+                       rtc_field_rect(static_cast<rtc_edit_field>(captured_index)));
+        case ui_control_type::rtc_key:
+            return captured_index < RTC_KEY_COUNT &&
+                   point_in_rect(x, y, rtc_key_rect(captured_index));
+        case ui_control_type::file_row:
+            return captured_index < FILE_VIEW_ROW_COUNT &&
+                   point_in_rect(x, y, file_row_rect(captured_index));
+        case ui_control_type::file_previous_page:
+            return point_in_rect(x, y, file_previous_page_rect());
+        case ui_control_type::file_next_page:
+            return point_in_rect(x, y, file_next_page_rect());
+        case ui_control_type::test_surface: {
+            const display_rect content = {
+                0, TEST_CONTENT_REGION_TOP, UI_DISPLAY_WIDTH, TEST_CONTENT_REGION_HEIGHT,
+            };
+            return point_in_rect(x, y, content);
+        }
+        case ui_control_type::none:
+            return false;
+    }
+    return false;
 }
 
 }  // namespace
@@ -183,17 +218,21 @@ bool ui_interaction_process(const input_event& input, ui_action_event& action)
         return false;
     }
     if (input.gesture == input_gesture_type::press) {
-        if (active_view == ui_view_id::menu &&
-            !ui_presentation_get_menu_view(active_menu_view)) {
-            return false;
-        }
-        if (active_view == ui_view_id::file &&
-            !ui_presentation_get_file_view(active_file_view)) {
+        ui_presentation_read_guard presented(active_view);
+        const bool requires_view_state = active_view == ui_view_id::menu ||
+                                         active_view == ui_view_id::file;
+        if (requires_view_state && !presented.valid()) {
             return false;
         }
         rtc_controls_enabled =
             ui_presentation_rtc_controls_enabled();
-        if (!hit_test(input.start_x, input.start_y, captured_control, captured_index)) {
+        if (!hit_test(
+                input.start_x,
+                input.start_y,
+                presented.menu_view(),
+                presented.file_view(),
+                captured_control,
+                captured_index)) {
             return false;
         }
         if (control_has_feedback(captured_control)) {

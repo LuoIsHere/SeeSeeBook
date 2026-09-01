@@ -1,7 +1,9 @@
 #include "ui_frame_pool.hpp"
 
+#include <cassert>
 #include <cstring>
 
+#include <esp_attr.h>
 #include <freertos/FreeRTOS.h>
 
 namespace {
@@ -20,9 +22,32 @@ struct ui_frame_slot {
 };
 
 portMUX_TYPE pool_lock = portMUX_INITIALIZER_UNLOCKED;
-ui_frame_slot slots[UI_FRAME_POOL_CAPACITY] = {};
-std::uint8_t active_count = 0U;
-std::uint8_t peak_active_count = 0U;
+DRAM_ATTR ui_frame_slot slots[UI_FRAME_POOL_CAPACITY] = {};
+ui_frame_pool_stats pool_stats = {};
+
+void increment_counter(std::uint32_t& counter)
+{
+    if (counter < UINT32_MAX) {
+        ++counter;
+    }
+}
+
+void validate_pool_locked()
+{
+    std::uint8_t calculated_active = 0U;
+    for (const ui_frame_slot& slot : slots) {
+        if (slot.state == ui_frame_slot_state::free) {
+            assert(slot.reference_count == 0U);
+            continue;
+        }
+        assert(slot.reference_count > 0U);
+        assert(slot.generation != 0U);
+        ++calculated_active;
+    }
+    assert(calculated_active == pool_stats.active_count);
+    assert(pool_stats.active_count <= UI_FRAME_POOL_CAPACITY);
+    assert(pool_stats.peak_active_count <= UI_FRAME_POOL_CAPACITY);
+}
 
 bool handle_matches_locked(
     const ui_frame_handle& handle,
@@ -54,14 +79,19 @@ bool ui_frame_pool_acquire(
         }
         slot.reference_count = 1U;
         slot.state = ui_frame_slot_state::building;
-        ++active_count;
-        if (active_count > peak_active_count) {
-            peak_active_count = active_count;
+        ++pool_stats.active_count;
+        if (pool_stats.active_count > pool_stats.peak_active_count) {
+            pool_stats.peak_active_count = pool_stats.active_count;
         }
+        increment_counter(pool_stats.acquire_count);
         handle = {slot.generation, index};
         frame = &slot.frame;
         break;
     }
+    if (frame == nullptr) {
+        increment_counter(pool_stats.acquire_failure_count);
+    }
+    validate_pool_locked();
     portEXIT_CRITICAL(&pool_lock);
     if (frame != nullptr) {
         // The producer has exclusive access while the slot is building.
@@ -74,14 +104,21 @@ bool ui_frame_pool_publish(const ui_frame_handle& handle)
 {
     bool published = false;
     portENTER_CRITICAL(&pool_lock);
-    if (ui_frame_handle_is_valid(handle)) {
+    if (!ui_frame_handle_is_valid(handle)) {
+        increment_counter(pool_stats.stale_handle_count);
+    } else {
         ui_frame_slot& slot = slots[handle.index];
-        if (handle_matches_locked(handle, slot) &&
-            slot.state == ui_frame_slot_state::building) {
+        if (!handle_matches_locked(handle, slot)) {
+            increment_counter(pool_stats.stale_handle_count);
+        } else if (slot.state == ui_frame_slot_state::building) {
             slot.state = ui_frame_slot_state::published;
+            increment_counter(pool_stats.publish_count);
             published = true;
+        } else {
+            increment_counter(pool_stats.invalid_transition_count);
         }
     }
+    validate_pool_locked();
     portEXIT_CRITICAL(&pool_lock);
     return published;
 }
@@ -90,15 +127,22 @@ bool ui_frame_pool_retain(const ui_frame_handle& handle)
 {
     bool retained = false;
     portENTER_CRITICAL(&pool_lock);
-    if (ui_frame_handle_is_valid(handle)) {
+    if (!ui_frame_handle_is_valid(handle)) {
+        increment_counter(pool_stats.stale_handle_count);
+    } else {
         ui_frame_slot& slot = slots[handle.index];
-        if (handle_matches_locked(handle, slot) &&
-            slot.state == ui_frame_slot_state::published &&
-            slot.reference_count < UINT16_MAX) {
+        if (!handle_matches_locked(handle, slot)) {
+            increment_counter(pool_stats.stale_handle_count);
+        } else if (slot.state == ui_frame_slot_state::published &&
+                   slot.reference_count < UINT16_MAX) {
             ++slot.reference_count;
+            increment_counter(pool_stats.retain_count);
             retained = true;
+        } else {
+            increment_counter(pool_stats.invalid_transition_count);
         }
     }
+    validate_pool_locked();
     portEXIT_CRITICAL(&pool_lock);
     return retained;
 }
@@ -109,11 +153,16 @@ bool ui_frame_pool_resolve(
 {
     frame = nullptr;
     portENTER_CRITICAL(&pool_lock);
-    if (ui_frame_handle_is_valid(handle)) {
+    if (!ui_frame_handle_is_valid(handle)) {
+        increment_counter(pool_stats.stale_handle_count);
+    } else {
         const ui_frame_slot& slot = slots[handle.index];
-        if (handle_matches_locked(handle, slot) &&
-            slot.state == ui_frame_slot_state::published) {
+        if (!handle_matches_locked(handle, slot)) {
+            increment_counter(pool_stats.stale_handle_count);
+        } else if (slot.state == ui_frame_slot_state::published) {
             frame = &slot.frame;
+        } else {
+            increment_counter(pool_stats.invalid_transition_count);
         }
     }
     portEXIT_CRITICAL(&pool_lock);
@@ -124,19 +173,25 @@ bool ui_frame_pool_release(ui_frame_handle& handle)
 {
     bool released = false;
     portENTER_CRITICAL(&pool_lock);
-    if (ui_frame_handle_is_valid(handle)) {
+    if (!ui_frame_handle_is_valid(handle)) {
+        increment_counter(pool_stats.stale_handle_count);
+    } else {
         ui_frame_slot& slot = slots[handle.index];
         if (handle_matches_locked(handle, slot)) {
             --slot.reference_count;
             if (slot.reference_count == 0U) {
                 slot.state = ui_frame_slot_state::free;
-                if (active_count > 0U) {
-                    --active_count;
+                if (pool_stats.active_count > 0U) {
+                    --pool_stats.active_count;
                 }
             }
+            increment_counter(pool_stats.release_count);
             released = true;
+        } else {
+            increment_counter(pool_stats.stale_handle_count);
         }
     }
+    validate_pool_locked();
     portEXIT_CRITICAL(&pool_lock);
     if (released) {
         handle = invalid_ui_frame_handle();
@@ -144,12 +199,17 @@ bool ui_frame_pool_release(ui_frame_handle& handle)
     return released;
 }
 
+void ui_frame_pool_record_queue_reclaim()
+{
+    portENTER_CRITICAL(&pool_lock);
+    increment_counter(pool_stats.queue_reclaim_count);
+    portEXIT_CRITICAL(&pool_lock);
+}
+
 ui_frame_pool_stats ui_frame_pool_get_stats()
 {
-    ui_frame_pool_stats stats = {};
     portENTER_CRITICAL(&pool_lock);
-    stats.active_count = active_count;
-    stats.peak_active_count = peak_active_count;
+    const ui_frame_pool_stats stats = pool_stats;
     portEXIT_CRITICAL(&pool_lock);
     return stats;
 }

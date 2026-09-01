@@ -97,6 +97,22 @@ refresh_mode logical_refresh_mode(
                : requested_mode;
 }
 
+display_refresh_error logical_refresh_error(
+    paper_mono::otp_refresh_error error)
+{
+    switch (error) {
+        case paper_mono::otp_refresh_error::none:
+            return display_refresh_error::none;
+        case paper_mono::otp_refresh_error::invalid_request:
+            return display_refresh_error::invalid_request;
+        case paper_mono::otp_refresh_error::internal_i2c_unavailable:
+            return display_refresh_error::hardware_control_unavailable;
+        case paper_mono::otp_refresh_error::transport_failure:
+            return display_refresh_error::transport_failure;
+    }
+    return display_refresh_error::transport_failure;
+}
+
 }  // namespace
 
 std::int16_t display_surface::width() const
@@ -291,6 +307,7 @@ display_refresh_result hal_display_refresh(
         false,
         mode,
         0U,
+        display_refresh_error::invalid_request,
     };
     if (!display_initialized || !valid_refresh_rect(rect)) {
         ESP_LOGE(
@@ -306,21 +323,42 @@ display_refresh_result hal_display_refresh(
 
     const paper_mono::otp_refresh_rect native_rect = native_refresh_rect(rect);
     const paper_mono::otp_refresh_kind requested_kind = native_refresh_kind(mode);
-    const paper_mono::otp_refresh_result driver_result =
+    paper_mono::otp_refresh_result driver_result =
         paper_mono::epd_otp_driver_refresh(
             static_cast<const std::uint8_t*>(frame_canvas.getBuffer()),
             frame_canvas.bufferLength(),
             native_rect,
             requested_kind);
+    std::uint32_t driver_duration_ms = driver_result.duration_ms;
+    bool recovery_attempted = false;
+    bool recovered = false;
+    if (!driver_result.success &&
+        driver_result.error ==
+            paper_mono::otp_refresh_error::internal_i2c_unavailable) {
+        recovery_attempted = true;
+        recovered = hal_internal_i2c_recover();
+        if (recovered) {
+            ESP_LOGW(
+                log_tag,
+                "internal I2C recovered; retrying one quality refresh");
+            driver_result = paper_mono::epd_otp_driver_refresh(
+                static_cast<const std::uint8_t*>(frame_canvas.getBuffer()),
+                frame_canvas.bufferLength(),
+                native_rect,
+                paper_mono::otp_refresh_kind::full_mono);
+            driver_duration_ms += driver_result.duration_ms;
+        }
+    }
     result.success = driver_result.success;
     result.actual_mode = logical_refresh_mode(
         driver_result.actual_kind,
         mode);
-    result.duration_ms = driver_result.duration_ms;
+    result.duration_ms = driver_duration_ms;
+    result.error = logical_refresh_error(driver_result.error);
 
     ESP_LOGI(
         log_tag,
-        "logical=%d,%d %dx%d native=%u,%u %ux%u requested=%u physical=%s actual=%u success=%d",
+        "logical=%d,%d %dx%d native=%u,%u %ux%u requested=%u physical=%s actual=%u success=%d error=%u recovery=%u recovered=%u",
         rect.left,
         rect.top,
         rect.width,
@@ -334,7 +372,10 @@ display_refresh_result hal_display_refresh(
             ? "quality"
             : "partial_otp",
         static_cast<unsigned>(result.actual_mode),
-        result.success);
+        result.success,
+        static_cast<unsigned>(result.error),
+        recovery_attempted ? 1U : 0U,
+        recovered ? 1U : 0U);
     return result;
 }
 

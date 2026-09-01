@@ -36,6 +36,14 @@ bool driver_initialized = false;
 bool baseline_ready = false;
 bool panel_awake = false;
 
+otp_refresh_error current_refresh_error()
+{
+    return epd_otp_transport::last_error() ==
+                   epd_otp_transport::transport_error::internal_i2c_unavailable
+               ? otp_refresh_error::internal_i2c_unavailable
+               : otp_refresh_error::transport_failure;
+}
+
 std::uint32_t monotonic_ms()
 {
     return static_cast<std::uint32_t>(esp_timer_get_time() / 1000);
@@ -303,6 +311,7 @@ bool epd_otp_driver_init(
     const std::uint8_t* white_frame,
     std::size_t frame_size)
 {
+    epd_otp_transport::clear_error();
     if (driver_initialized) {
         return true;
     }
@@ -337,6 +346,7 @@ otp_refresh_result epd_otp_driver_refresh(
         false,
         requested_kind,
         0U,
+        otp_refresh_error::invalid_request,
     };
     if (!driver_initialized || frame == nullptr ||
         frame_size != PAPER_MONO_EPD_FRAME_SIZE || !valid_refresh_rect(rect)) {
@@ -346,6 +356,7 @@ otp_refresh_result epd_otp_driver_refresh(
 
     // Only a missing baseline may force Quality. Ghost cleanup policy belongs
     // exclusively to the UI renderer's per-region debt counters.
+    epd_otp_transport::clear_error();
     result.actual_kind = !baseline_ready
                              ? otp_refresh_kind::full_mono
                              : requested_kind;
@@ -369,18 +380,21 @@ otp_refresh_result epd_otp_driver_refresh(
 
     if (result.success) {
         baseline_ready = true;
+        result.error = otp_refresh_error::none;
     } else {
         // A failed activation leaves controller RAM state uncertain. The next
         // request rebuilds it through the baseline safety path.
         baseline_ready = false;
+        result.error = current_refresh_error();
     }
 
     ESP_LOGI(
         log_tag,
-        "refresh end requested=%s actual=%s success=%d duration_ms=%lu",
+        "refresh end requested=%s actual=%s success=%d error=%u duration_ms=%lu",
         refresh_kind_name(requested_kind),
         refresh_kind_name(result.actual_kind),
         result.success,
+        static_cast<unsigned>(result.error),
         static_cast<unsigned long>(result.duration_ms));
     return result;
 }
@@ -392,6 +406,7 @@ bool epd_otp_driver_sleep()
     }
 
     const std::uint32_t start_ms = monotonic_ms();
+    epd_otp_transport::clear_error();
     if (!epd_otp_transport::wait_ready(PAPER_MONO_EPD_BUSY_TIMEOUT_MS) ||
         !epd_otp_transport::begin_write()) {
         return false;

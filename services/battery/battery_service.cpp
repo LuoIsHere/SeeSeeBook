@@ -18,12 +18,21 @@ constexpr char log_tag[] = "service_battery";
 constexpr std::uint32_t task_stack_size = 4096U;
 constexpr UBaseType_t task_priority = 4U;
 
+static_assert(BATTERY_VBUS_CHANGE_DEBOUNCE_SAMPLES >= 2U);
+
 QueueHandle_t event_queue = nullptr;
 TaskHandle_t battery_task_handle = nullptr;
 portMUX_TYPE cache_mutex = portMUX_INITIALIZER_UNLOCKED;
 battery_snapshot cached_snapshot = {};
 bool cache_has_sample = false;
 std::atomic_uint32_t detail_subscribers{0U};
+
+struct vbus_monitor_state {
+    bool initialized;
+    bool stable_present;
+    bool candidate_present;
+    std::uint8_t candidate_count;
+};
 
 void publish_snapshot(const battery_snapshot& snapshot)
 {
@@ -39,8 +48,7 @@ void publish_snapshot(const battery_snapshot& snapshot)
 
 bool update_vbus_state(
     battery_snapshot& snapshot,
-    bool& initialized,
-    bool& previous_present,
+    vbus_monitor_state& monitor,
     bool& changed)
 {
     bool present = false;
@@ -49,31 +57,39 @@ bool update_vbus_state(
         return false;
     }
     changed = false;
-    if (!initialized) {
-        initialized = true;
-        previous_present = present;
-        changed = true;
-        if (!present) {
-            snapshot.charging = false;
-            snapshot.charging_valid = true;
-        } else {
-            bool charging = false;
-            snapshot.charging_valid = hal_battery_read_charging(charging);
-            snapshot.charging = snapshot.charging_valid && charging;
-        }
+    if (!monitor.initialized) {
+        monitor.initialized = true;
+        monitor.stable_present = present;
+        monitor.candidate_present = present;
+        monitor.candidate_count = 0U;
+        snapshot.charging = false;
+        snapshot.charging_valid = !present;
         ESP_LOGI(
             log_tag,
-            "VBUS initialized present=%u charging=%u valid=%u",
+            "VBUS baseline present=%u charging_read_deferred=1 valid=%u",
             present ? 1U : 0U,
-            snapshot.charging ? 1U : 0U,
             snapshot.charging_valid ? 1U : 0U);
         return true;
     }
-    if (present == previous_present) {
+    if (present == monitor.stable_present) {
+        monitor.candidate_present = present;
+        monitor.candidate_count = 0U;
+        return true;
+    }
+    if (present != monitor.candidate_present) {
+        monitor.candidate_present = present;
+        monitor.candidate_count = 1U;
+        return true;
+    }
+    if (monitor.candidate_count < UINT8_MAX) {
+        ++monitor.candidate_count;
+    }
+    if (monitor.candidate_count < BATTERY_VBUS_CHANGE_DEBOUNCE_SAMPLES) {
         return true;
     }
 
-    previous_present = present;
+    monitor.stable_present = present;
+    monitor.candidate_count = 0U;
     changed = true;
     if (!present) {
         snapshot.charging = false;
@@ -110,8 +126,7 @@ bool update_telemetry(battery_snapshot& snapshot)
 void battery_task(void*)
 {
     battery_snapshot snapshot = {};
-    bool vbus_initialized = false;
-    bool previous_vbus_present = false;
+    vbus_monitor_state vbus_monitor = {};
     bool sample_initialized = false;
     bool force_sample = true;
     std::uint32_t last_sample_ms = 0U;
@@ -126,8 +141,7 @@ void battery_task(void*)
         bool vbus_changed = false;
         const bool vbus_valid = update_vbus_state(
             snapshot,
-            vbus_initialized,
-            previous_vbus_present,
+            vbus_monitor,
             vbus_changed);
         const bool telemetry_valid = !sample_due || update_telemetry(snapshot);
         if (vbus_valid && telemetry_valid && (sample_due || vbus_changed)) {

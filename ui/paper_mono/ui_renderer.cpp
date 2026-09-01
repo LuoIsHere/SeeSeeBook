@@ -60,6 +60,9 @@ void monitor_renderer_stack()
 {
     static std::uint32_t last_check_ms = 0U;
     static UBaseType_t lowest_reported_bytes = UINT32_MAX;
+    static std::uint32_t reported_acquire_failures = 0U;
+    static std::uint32_t reported_stale_handles = 0U;
+    static std::uint32_t reported_invalid_transitions = 0U;
     const std::uint32_t now_ms = monotonic_ms();
     if (now_ms - last_check_ms < stack_monitor_period_ms) {
         return;
@@ -71,27 +74,52 @@ void monitor_renderer_stack()
     const bool meaningful_drop = lowest_reported_bytes == UINT32_MAX ||
                                  free_bytes + stack_log_step_bytes <=
                                      lowest_reported_bytes;
-    if (!crossed_warning && !meaningful_drop) {
+    const ui_frame_pool_stats stats = ui_frame_pool_get_stats();
+    const bool pool_anomaly_changed =
+        stats.acquire_failure_count != reported_acquire_failures ||
+        stats.stale_handle_count != reported_stale_handles ||
+        stats.invalid_transition_count != reported_invalid_transitions;
+    if (!crossed_warning && !meaningful_drop && !pool_anomaly_changed) {
         return;
     }
-    lowest_reported_bytes = free_bytes;
-    const ui_frame_pool_stats stats = ui_frame_pool_get_stats();
-    if (free_bytes < stack_warning_bytes) {
+    if (meaningful_drop || crossed_warning) {
+        lowest_reported_bytes = free_bytes;
+    }
+    reported_acquire_failures = stats.acquire_failure_count;
+    reported_stale_handles = stats.stale_handle_count;
+    reported_invalid_transitions = stats.invalid_transition_count;
+    if (free_bytes < stack_warning_bytes || pool_anomaly_changed) {
         ESP_LOGW(
             log_tag,
-            "renderer stack low water=%lu bytes frame_pool=%u/%u peak=%u",
+            "renderer stack=%lu frame_pool=%u/%u peak=%u acquire=%lu fail=%lu publish=%lu retain=%lu release=%lu reclaim=%lu stale=%lu invalid=%lu",
             static_cast<unsigned long>(free_bytes),
             stats.active_count,
             UI_FRAME_POOL_CAPACITY,
-            stats.peak_active_count);
+            stats.peak_active_count,
+            static_cast<unsigned long>(stats.acquire_count),
+            static_cast<unsigned long>(stats.acquire_failure_count),
+            static_cast<unsigned long>(stats.publish_count),
+            static_cast<unsigned long>(stats.retain_count),
+            static_cast<unsigned long>(stats.release_count),
+            static_cast<unsigned long>(stats.queue_reclaim_count),
+            static_cast<unsigned long>(stats.stale_handle_count),
+            static_cast<unsigned long>(stats.invalid_transition_count));
     } else {
         ESP_LOGI(
             log_tag,
-            "renderer stack low water=%lu bytes frame_pool=%u/%u peak=%u",
+            "renderer stack=%lu frame_pool=%u/%u peak=%u acquire=%lu fail=%lu publish=%lu retain=%lu release=%lu reclaim=%lu stale=%lu invalid=%lu",
             static_cast<unsigned long>(free_bytes),
             stats.active_count,
             UI_FRAME_POOL_CAPACITY,
-            stats.peak_active_count);
+            stats.peak_active_count,
+            static_cast<unsigned long>(stats.acquire_count),
+            static_cast<unsigned long>(stats.acquire_failure_count),
+            static_cast<unsigned long>(stats.publish_count),
+            static_cast<unsigned long>(stats.retain_count),
+            static_cast<unsigned long>(stats.release_count),
+            static_cast<unsigned long>(stats.queue_reclaim_count),
+            static_cast<unsigned long>(stats.stale_handle_count),
+            static_cast<unsigned long>(stats.invalid_transition_count));
     }
 }
 
@@ -201,17 +229,6 @@ display_refresh_result commit_refresh(
     display_update_region region)
 {
     display_refresh_result result = hal_display_refresh(rect, requested_mode);
-    if (!result.success) {
-        // Retry once with a full monochrome cycle. The HAL marks an uncertain
-        // differential baseline invalid after every failed activation.
-        ESP_LOGW(
-            log_tag,
-            "refresh failed mode=%s; attempting one quality recovery",
-            refresh_mode_name(requested_mode));
-        result = hal_display_refresh(
-            {0, 0, UI_DISPLAY_WIDTH, UI_DISPLAY_HEIGHT},
-            refresh_mode::quality);
-    }
     if (result.success) {
         record_refresh(debt, result.actual_mode, region);
         if (result.actual_mode != requested_mode) {
@@ -223,7 +240,16 @@ display_refresh_result commit_refresh(
                 static_cast<unsigned long>(result.duration_ms));
         }
     } else {
-        ESP_LOGE(log_tag, "display refresh and bounded recovery both failed");
+        ESP_LOGE(
+            log_tag,
+            "display refresh failed mode=%s error=%u; HAL recovery unavailable",
+            refresh_mode_name(requested_mode),
+            static_cast<unsigned>(result.error));
+        // Abort the failed active panel session immediately. The next request
+        // must wake and rebuild its differential baseline before rendering.
+        if (!hal_display_sleep()) {
+            ESP_LOGW(log_tag, "failed display session could not enter sleep");
+        }
     }
     return result;
 }
@@ -532,6 +558,7 @@ bool reclaim_queued_frame(bool& quality_pending)
     if (xQueueReceive(request_queue, &discarded, 0) != pdTRUE) {
         return false;
     }
+    ui_frame_pool_record_queue_reclaim();
     const display_request* discarded_frame = nullptr;
     if (ui_frame_pool_resolve(discarded, discarded_frame) &&
         discarded_frame != nullptr) {
@@ -870,14 +897,20 @@ bool ui_render_battery(const battery_view_state& state, ui_update_reason reason)
     return submit_request(handle, *request);
 }
 
-bool ui_render_file(const file_view_state& state, ui_update_reason reason)
+bool ui_write_file_frame(
+    ui_update_reason reason,
+    file_frame_writer writer,
+    const void* context)
 {
     ui_frame_handle handle = invalid_ui_frame_handle();
     display_request* request = nullptr;
     if (!acquire_request(ui_view_id::file, reason, handle, request) || request == nullptr) {
         return false;
     }
-    request->payload.file = state;
+    if (writer == nullptr || !writer(request->payload.file, context)) {
+        release_frame(handle, "file_writer_failure");
+        return false;
+    }
     if (reason != ui_update_reason::view_opened &&
         request->mode != refresh_mode::quality) {
         request->mode = refresh_mode::text;

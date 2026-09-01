@@ -1,11 +1,13 @@
 #include "ui_presentation.hpp"
 
+#include <esp_log.h>
 #include <freertos/FreeRTOS.h>
 
 #include "ui_frame_pool.hpp"
 
 namespace {
 
+constexpr char log_tag[] = "ui_presentation";
 portMUX_TYPE presentation_lock = portMUX_INITIALIZER_UNLOCKED;
 std::uint32_t next_generation = 0U;
 ui_view_id expected_view = ui_view_id::menu;
@@ -31,15 +33,19 @@ bool acquire_presented_frame(
 {
     handle = invalid_ui_frame_handle();
     frame = nullptr;
+    // Lock order is presentation_lock then the short pool metadata lock. No
+    // caller may enter presentation state while holding the pool lock.
     portENTER_CRITICAL(&presentation_lock);
     const bool available = presented_view == view &&
                            presented_generation != 0U &&
                            ui_frame_handle_is_valid(presented_handle);
+    bool retained = false;
     if (available) {
         handle = presented_handle;
+        retained = ui_frame_pool_retain(handle);
     }
     portEXIT_CRITICAL(&presentation_lock);
-    if (!available || !ui_frame_pool_retain(handle)) {
+    if (!available || !retained) {
         return false;
     }
 
@@ -49,7 +55,10 @@ bool acquire_presented_frame(
                          ui_frame_handles_equal(presented_handle, handle);
     portEXIT_CRITICAL(&presentation_lock);
     if (!current || !ui_frame_pool_resolve(handle, frame)) {
-        ui_frame_pool_release(handle);
+        if (!ui_frame_pool_release(handle)) {
+            ESP_LOGE(log_tag, "rejected frame release failed view=%u",
+                     static_cast<unsigned>(view));
+        }
         frame = nullptr;
         return false;
     }
@@ -57,6 +66,60 @@ bool acquire_presented_frame(
 }
 
 }  // namespace
+
+ui_presentation_read_guard::ui_presentation_read_guard(ui_view_id view)
+    : view_(view)
+{
+    if (view != ui_view_id::menu && view != ui_view_id::file) {
+        return;
+    }
+    ui_frame_handle handle = invalid_ui_frame_handle();
+    const display_request* frame = nullptr;
+    if (!acquire_presented_frame(view, handle, frame) || frame == nullptr) {
+        return;
+    }
+    if (view == ui_view_id::menu) {
+        state_ = &frame->payload.menu;
+    } else if (view == ui_view_id::file) {
+        state_ = &frame->payload.file;
+    }
+    generation_ = handle.generation;
+    index_ = handle.index;
+}
+
+ui_presentation_read_guard::~ui_presentation_read_guard()
+{
+    if (!valid()) {
+        return;
+    }
+    ui_frame_handle handle = {generation_, index_};
+    if (!ui_frame_pool_release(handle)) {
+        ESP_LOGE(log_tag, "read guard release failed view=%u",
+                 static_cast<unsigned>(view_));
+    }
+    generation_ = 0U;
+    index_ = 0xFFU;
+    state_ = nullptr;
+}
+
+bool ui_presentation_read_guard::valid() const
+{
+    return generation_ != 0U && state_ != nullptr;
+}
+
+const menu_view_state* ui_presentation_read_guard::menu_view() const
+{
+    return valid() && view_ == ui_view_id::menu
+               ? static_cast<const menu_view_state*>(state_)
+               : nullptr;
+}
+
+const file_view_state* ui_presentation_read_guard::file_view() const
+{
+    return valid() && view_ == ui_view_id::file
+               ? static_cast<const file_view_state*>(state_)
+               : nullptr;
+}
 
 std::uint32_t ui_presentation_select_view(ui_view_id view)
 {
@@ -104,7 +167,10 @@ bool ui_presentation_commit_frame(
     }
     portEXIT_CRITICAL(&presentation_lock);
     if (ui_frame_handle_is_valid(previous_handle)) {
-        ui_frame_pool_release(previous_handle);
+        if (!ui_frame_pool_release(previous_handle)) {
+            ESP_LOGE(log_tag, "previous frame release failed view=%u",
+                     static_cast<unsigned>(frame->view));
+        }
     }
     return true;
 }
@@ -117,30 +183,6 @@ bool ui_presentation_input_ready(ui_view_id view)
                        expected_generation == presented_generation;
     portEXIT_CRITICAL(&presentation_lock);
     return ready;
-}
-
-bool ui_presentation_get_menu_view(menu_view_state& state)
-{
-    ui_frame_handle handle = invalid_ui_frame_handle();
-    const display_request* frame = nullptr;
-    if (!acquire_presented_frame(ui_view_id::menu, handle, frame) || frame == nullptr) {
-        return false;
-    }
-    state = frame->payload.menu;
-    ui_frame_pool_release(handle);
-    return true;
-}
-
-bool ui_presentation_get_file_view(file_view_state& state)
-{
-    ui_frame_handle handle = invalid_ui_frame_handle();
-    const display_request* frame = nullptr;
-    if (!acquire_presented_frame(ui_view_id::file, handle, frame) || frame == nullptr) {
-        return false;
-    }
-    state = frame->payload.file;
-    ui_frame_pool_release(handle);
-    return true;
 }
 
 bool ui_presentation_rtc_controls_enabled()

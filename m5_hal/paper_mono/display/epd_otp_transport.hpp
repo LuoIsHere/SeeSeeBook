@@ -12,6 +12,17 @@
 
 namespace paper_mono::epd_otp_transport {
 
+enum class transport_error : std::uint8_t {
+    none,
+    internal_i2c_unavailable,
+    spi_failure,
+    panel_timeout,
+};
+
+// Clears and reads the failure classification for the current operation.
+void clear_error();
+transport_error last_error();
+
 // Takes ownership of the PaperMono EPD SPI2 bus after M5Unified board setup.
 bool init();
 

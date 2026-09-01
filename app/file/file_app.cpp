@@ -116,7 +116,6 @@ void file_app::on_close()
     page_index_ = 0U;
     popup_visible_ = false;
     status_ = file_view_status::no_card;
-    view_ = {};
     ESP_LOGI(log_tag, "FileApp session cleared");
 }
 
@@ -261,10 +260,21 @@ void file_app::release_directory_result()
 
 void file_app::submit_frame(ui_update_reason reason)
 {
-    build_view(view_);
-    if (!ui_render_file(view_, reason)) {
+    if (!ui_write_file_frame(reason, write_frame, this)) {
         ESP_LOGW(log_tag, "renderer queue unavailable");
     }
+}
+
+bool file_app::write_frame(
+    file_view_state& view,
+    const void* context)
+{
+    const auto* instance = static_cast<const file_app*>(context);
+    if (instance == nullptr) {
+        return false;
+    }
+    instance->build_view(view);
+    return true;
 }
 
 void file_app::build_view(file_view_state& view) const

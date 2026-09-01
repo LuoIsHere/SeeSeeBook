@@ -16,24 +16,57 @@ constexpr std::uint8_t ip2315_i2c_address = 0x75U;
 constexpr std::uint8_t ip2315_charge_status_register = 0xC7U;
 constexpr std::uint8_t ip2315_charging_mask = 1U << 7U;
 constexpr std::uint32_t ip2315_i2c_frequency_hz = 100000U;
+constexpr std::uint8_t m5ioe1_gpio_output_high_register = 0x06U;
+constexpr std::uint8_t ip2315_gate_mask = 1U << 2U;
 constexpr std::uint8_t m5pm1_power_source_register = 0x04U;
 constexpr std::uint32_t m5pm1_i2c_frequency_hz = 100000U;
 constexpr std::uint32_t ip2315_ready_delay_ms = 2U;
-constexpr std::uint8_t ip2315_ready_attempts = 8U;
+constexpr std::uint8_t ip2315_ready_attempts = 64U;
 
 class ip2315_session final {
 public:
     ~ip2315_session()
     {
-        if (disconnect_pending_ && !disconnect()) {
+        if (disconnect_pending_ && !disconnect_attempted_ && !disconnect()) {
             ESP_LOGE(log_tag, "IP2315 fallback detach failed");
         }
     }
 
     bool connect()
     {
+        auto& io_expander = M5.getIOExpander(0);
+        if (!io_expander.setHighImpedance(
+                m5::M5IOE1_Class::gpio11,
+                false) ||
+            !io_expander.setDirection(
+                m5::M5IOE1_Class::gpio11,
+                true)) {
+            hal_internal_i2c_mark_fault();
+            return false;
+        }
+
+        std::uint8_t output_high = 0U;
+        if (!M5.In_I2C.readRegister(
+                m5::M5IOE1_Class::DEFAULT_ADDRESS,
+                m5ioe1_gpio_output_high_register,
+                &output_high,
+                sizeof(output_high),
+                ip2315_i2c_frequency_hz)) {
+            hal_internal_i2c_mark_fault();
+            return false;
+        }
+
+        detached_output_high_ = static_cast<std::uint8_t>(
+            output_high & ~ip2315_gate_mask);
+        const std::uint8_t attached_output_high = static_cast<std::uint8_t>(
+            detached_output_high_ | ip2315_gate_mask);
         disconnect_pending_ = true;
-        return M5.getIOExpander(0).digitalWrite(m5::M5IOE1_Class::gpio11, true);
+        return M5.In_I2C.writeRegister(
+            m5::M5IOE1_Class::DEFAULT_ADDRESS,
+            m5ioe1_gpio_output_high_register,
+            &attached_output_high,
+            sizeof(attached_output_high),
+            ip2315_i2c_frequency_hz);
     }
 
     bool disconnect()
@@ -41,14 +74,26 @@ public:
         if (!disconnect_pending_) {
             return true;
         }
-        const bool disconnected =
-            M5.getIOExpander(0).digitalWrite(m5::M5IOE1_Class::gpio11, false);
+        disconnect_attempted_ = true;
+        // Restore the cached register byte with one write. This avoids a
+        // read-modify-write after the temporarily attached device misbehaves.
+        const bool disconnected = M5.In_I2C.writeRegister(
+            m5::M5IOE1_Class::DEFAULT_ADDRESS,
+            m5ioe1_gpio_output_high_register,
+            &detached_output_high_,
+            sizeof(detached_output_high_),
+            ip2315_i2c_frequency_hz);
         disconnect_pending_ = !disconnected;
+        if (!disconnected) {
+            hal_internal_i2c_mark_fault();
+        }
         return disconnected;
     }
 
 private:
     bool disconnect_pending_ = false;
+    bool disconnect_attempted_ = false;
+    std::uint8_t detached_output_high_ = 0U;
 };
 
 }  // namespace
@@ -101,48 +146,60 @@ bool hal_battery_read_vbus(bool& present)
 
 bool hal_battery_read_charging(bool& charging)
 {
-    internal_i2c_guard bus_guard(INTERNAL_I2C_BATTERY_TIMEOUT_MS);
-    if (!bus_guard.locked()) {
-        return false;
-    }
-
     const std::int64_t start_us = esp_timer_get_time();
-    ip2315_session session;
-    const bool attached = session.connect();
+    bool attached = false;
     bool ready = false;
     bool read_succeeded = false;
+    bool detached = false;
     std::uint8_t charge_status = 0U;
+    {
+        internal_i2c_guard bus_guard(INTERNAL_I2C_BATTERY_TIMEOUT_MS);
+        if (!bus_guard.locked()) {
+            return false;
+        }
 
-    if (attached) {
-        vTaskDelay(pdMS_TO_TICKS(ip2315_ready_delay_ms));
-        for (std::uint8_t attempt = 0U; attempt < ip2315_ready_attempts; ++attempt) {
-            if (M5.In_I2C.scanID(ip2315_i2c_address, ip2315_i2c_frequency_hz)) {
-                ready = true;
-                break;
+        ip2315_session session;
+        attached = session.connect();
+        if (attached) {
+            vTaskDelay(pdMS_TO_TICKS(ip2315_ready_delay_ms));
+            for (std::uint8_t attempt = 0U;
+                 attempt < ip2315_ready_attempts;
+                 ++attempt) {
+                if (M5.In_I2C.scanID(
+                        ip2315_i2c_address,
+                        ip2315_i2c_frequency_hz)) {
+                    ready = true;
+                    break;
+                }
+            }
+            if (ready) {
+                read_succeeded = M5.In_I2C.readRegister(
+                    ip2315_i2c_address,
+                    ip2315_charge_status_register,
+                    &charge_status,
+                    sizeof(charge_status),
+                    ip2315_i2c_frequency_hz);
             }
         }
-        if (ready) {
-            read_succeeded = M5.In_I2C.readRegister(
-                ip2315_i2c_address,
-                ip2315_charge_status_register,
-                &charge_status,
-                sizeof(charge_status),
-                ip2315_i2c_frequency_hz);
-        }
+        detached = session.disconnect();
     }
 
-    const bool detached = session.disconnect();
     const bool valid = attached && ready && read_succeeded && detached;
     if (valid) {
         charging = (charge_status & ip2315_charging_mask) != 0U;
     }
+    const bool recovery_attempted =
+        hal_internal_i2c_get_state() == internal_i2c_state::faulted;
+    const bool recovered = recovery_attempted && hal_internal_i2c_recover();
     ESP_LOGI(
         log_tag,
-        "IP2315 attached=%u ready=%u read=%u detached=%u duration_ms=%lld",
+        "IP2315 attached=%u ready=%u read=%u detached=%u recovery=%u recovered=%u duration_ms=%lld",
         attached ? 1U : 0U,
         ready ? 1U : 0U,
         read_succeeded ? 1U : 0U,
         detached ? 1U : 0U,
+        recovery_attempted ? 1U : 0U,
+        recovered ? 1U : 0U,
         static_cast<long long>((esp_timer_get_time() - start_us) / 1000));
     return valid;
 }

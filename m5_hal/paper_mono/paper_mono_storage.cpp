@@ -5,6 +5,7 @@
 #include <cstring>
 #include <dirent.h>
 #include <new>
+#include <limits>
 #include <sys/stat.h>
 
 #include <M5Unified.h>
@@ -239,4 +240,58 @@ void hal_storage_close_directory(hal_storage_directory*& directory)
     delete directory;
     directory = nullptr;
     xSemaphoreGive(filesystem_mutex);
+}
+
+esp_err_t hal_storage_read_file_chunk(
+    const char* path, std::uint64_t offset, char* data, std::size_t capacity,
+    std::size_t& length, std::uint64_t& file_size, std::int64_t& modified_time)
+{
+    length = 0U;
+    file_size = 0U;
+    modified_time = 0;
+    if (data == nullptr || capacity == 0U ||
+        offset > static_cast<std::uint64_t>(std::numeric_limits<off_t>::max())) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    char full_path[SD_PATH_LENGTH + sizeof(SD_MOUNT_POINT)] = {};
+    if (!build_full_path(path, full_path, sizeof(full_path))) {
+        return ESP_ERR_INVALID_SIZE;
+    }
+    if (xSemaphoreTake(filesystem_mutex,
+                       pdMS_TO_TICKS(filesystem_lock_timeout_ms)) != pdTRUE) {
+        return ESP_ERR_TIMEOUT;
+    }
+    esp_err_t result = ESP_OK;
+    FILE* stream = nullptr;
+    if (mounted_card == nullptr) {
+        result = ESP_ERR_INVALID_STATE;
+    } else {
+        stream = std::fopen(full_path, "rb");
+        if (stream == nullptr) {
+            result = errno == ENOENT ? ESP_ERR_NOT_FOUND : ESP_FAIL;
+        }
+    }
+    if (stream != nullptr) {
+        struct stat metadata = {};
+        if (fstat(fileno(stream), &metadata) != 0 || !S_ISREG(metadata.st_mode) ||
+            metadata.st_size < 0) {
+            result = ESP_FAIL;
+        } else {
+            file_size = static_cast<std::uint64_t>(metadata.st_size);
+            modified_time = static_cast<std::int64_t>(metadata.st_mtime);
+            if (offset > file_size || fseeko(stream, static_cast<off_t>(offset), SEEK_SET) != 0) {
+                result = ESP_ERR_INVALID_SIZE;
+            } else {
+                length = std::fread(data, 1U, capacity, stream);
+                if (std::ferror(stream) != 0 || (length == 0U && offset < file_size)) {
+                    result = ESP_FAIL;
+                }
+            }
+        }
+        if (std::fclose(stream) != 0) {
+            result = ESP_FAIL;
+        }
+    }
+    xSemaphoreGive(filesystem_mutex);
+    return result;
 }

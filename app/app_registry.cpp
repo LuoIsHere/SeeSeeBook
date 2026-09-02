@@ -10,6 +10,7 @@
 #include "file/file_app.hpp"
 #include "menu/menu_app.hpp"
 #include "menu/menu_layout.hpp"
+#include "reader/reader_app.hpp"
 #include "rtc_setting/rtc_setting_app.hpp"
 #include "test/test_app.hpp"
 
@@ -38,6 +39,7 @@ constexpr app_registration registrations[] = {
     {{app_kind::battery, ui_view_id::battery, "BatteryApp"},
      &create_app<battery_app>},
     {{app_kind::file, ui_view_id::file, "FileApp"}, &create_app<file_app>},
+    {{app_kind::reader, ui_view_id::reader, "ReaderApp"}, &create_app<reader_app>},
 };
 
 std::array<app_record, std::size(registrations)> records = {};

@@ -11,6 +11,7 @@ enum class ui_view_id : std::uint8_t {
     rtc_setting,
     battery,
     file,
+    reader,
 };
 
 enum class ui_control_type : std::uint8_t {
@@ -23,6 +24,8 @@ enum class ui_control_type : std::uint8_t {
     file_row,
     file_previous_page,
     file_next_page,
+    reader_previous_page,
+    reader_next_page,
     test_surface,
 };
 

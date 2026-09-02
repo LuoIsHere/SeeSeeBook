@@ -7,6 +7,7 @@
 #include "display.hpp"
 #include "file_view.hpp"
 #include "menu_view.hpp"
+#include "reader_view.hpp"
 #include "rtc_view.hpp"
 #include "test_view.hpp"
 #include "ui_action.hpp"
@@ -35,6 +36,7 @@ enum class display_update_region : std::uint8_t {
     test_content,
     battery_content,
     file_content,
+    reader_content,
 };
 
 union display_view_payload {
@@ -43,6 +45,7 @@ union display_view_payload {
     rtc_view_state rtc;
     battery_view_state battery;
     file_view_state file;
+    reader_view_state reader;
 };
 
 struct display_request {
@@ -68,5 +71,5 @@ struct display_control_request {
 
 static_assert(std::is_trivially_copyable_v<display_view_payload>);
 static_assert(std::is_trivially_copyable_v<display_request>);
-static_assert(sizeof(display_request) <= 680U);
+static_assert(sizeof(display_request) <= 2304U);
 static_assert(std::is_trivially_copyable_v<display_control_request>);

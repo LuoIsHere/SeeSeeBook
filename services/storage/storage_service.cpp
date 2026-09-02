@@ -7,6 +7,7 @@
 #include <atomic>
 #include <cstring>
 #include <strings.h>
+#include <variant>
 
 #include <esp_log.h>
 #include <freertos/FreeRTOS.h>
@@ -15,6 +16,7 @@
 #include <freertos/task.h>
 
 #include "storage.hpp"
+#include "storage_file_reader.hpp"
 #include "system_config.hpp"
 #include "system_tick_service.hpp"
 
@@ -33,18 +35,24 @@ constexpr std::uint32_t pool_lock_timeout_ms = 20U;
 constexpr std::uint32_t reference_count_mask = 0xffffU;
 constexpr std::uint32_t cleanup_pending_flag = 1U << 16U;
 
+enum class storage_operation : std::uint8_t { list_directory, read_file_chunk };
+
 struct storage_request {
     std::uint32_t request_id;
     std::uint32_t session_id;
     std::uint32_t media_generation;
     char path[STORAGE_MAX_PATH_LENGTH + 1U];
+    std::uint64_t offset;
+    storage_operation operation;
 };
+
+static_assert(std::is_trivially_copyable_v<storage_request>);
 
 struct result_slot {
     std::atomic_uint32_t generation{0U};
     std::atomic_uint32_t reference_state{0U};
     std::atomic_bool filling{false};
-    storage_directory_result result;
+    std::variant<storage_directory_result, storage_file_chunk_result> result;
 };
 
 QueueHandle_t request_queue = nullptr;
@@ -126,7 +134,7 @@ result_handle acquire_result_slot()
         result_slot& slot = result_pool[index];
         std::uint32_t reference_state = slot.reference_state.load();
         if (reference_state == cleanup_pending_flag) {
-            slot.result = {};
+            slot.result.emplace<storage_directory_result>();
             slot.filling.store(false);
             slot.reference_state.store(0U);
             reference_state = 0U;
@@ -139,7 +147,7 @@ result_handle acquire_result_slot()
             generation = 1U;
         }
         slot.generation.store(generation);
-        slot.result = {};
+        slot.result.emplace<storage_directory_result>();
         slot.filling.store(true);
         slot.reference_state.store(1U);
         handle = {index, generation};
@@ -149,7 +157,7 @@ result_handle acquire_result_slot()
     return handle;
 }
 
-storage_directory_result* mutable_result(const result_handle& handle)
+result_slot* mutable_result_slot(const result_handle& handle)
 {
     if (!result_handle_is_valid(handle) || handle.index >= result_pool.size()) {
         return nullptr;
@@ -157,7 +165,7 @@ storage_directory_result* mutable_result(const result_handle& handle)
     result_slot& slot = result_pool[handle.index];
     return slot.generation.load() == handle.generation &&
                    (slot.reference_state.load() & reference_count_mask) > 0U
-               ? &slot.result
+               ? &slot
                : nullptr;
 }
 
@@ -264,24 +272,29 @@ void storage_worker_task(void*)
             continue;
         }
         result_handle handle = acquire_result_slot();
-        storage_directory_result* result = mutable_result(handle);
-        if (result == nullptr) {
+        result_slot* slot = mutable_result_slot(handle);
+        if (slot == nullptr) {
             ESP_LOGW(log_tag, "result pool exhausted");
             continue;
         }
-        result->request_id = request.request_id;
-        result->session_id = request.session_id;
-        result->media_generation = request.media_generation;
-        result->path = request.path;
-        result->code = scan_directory(request, *result);
-        ESP_LOGI(
-            log_tag,
-            "scan path=%s entries=%u result=%u handle=%u:%u",
-            request.path,
-            static_cast<unsigned>(result->entries.size()),
-            static_cast<unsigned>(result->code),
-            static_cast<unsigned>(handle.index),
-            static_cast<unsigned>(handle.generation));
+        if (request.operation == storage_operation::read_file_chunk) {
+            auto& result = slot->result.emplace<storage_file_chunk_result>();
+            result.request_id = request.request_id;
+            result.session_id = request.session_id;
+            result.media_generation = request.media_generation;
+            result.offset = request.offset;
+            result.code = storage_read_file_chunk(request.path, result);
+        } else {
+            auto& result = std::get<storage_directory_result>(slot->result);
+            result.request_id = request.request_id;
+            result.session_id = request.session_id;
+            result.media_generation = request.media_generation;
+            result.path = request.path;
+            result.code = scan_directory(request, result);
+            ESP_LOGI(log_tag, "scan path=%s entries=%u result=%u", request.path,
+                     static_cast<unsigned>(result.entries.size()),
+                     static_cast<unsigned>(result.code));
+        }
         publish_result(handle);
     }
 }
@@ -415,6 +428,26 @@ bool storage_service_try_get_result_event(storage_result_event& event)
            xQueueReceive(result_queue, &event.handle, 0) == pdTRUE;
 }
 
+bool storage_service_read_file_chunk(
+    const char* path, std::uint64_t offset, std::uint32_t request_id,
+    std::uint32_t session_id, std::uint32_t requested_generation)
+{
+    if (request_queue == nullptr || current_state.load() != storage_state::ready ||
+        requested_generation != media_generation.load()) {
+        return false;
+    }
+    storage_request request = {};
+    request.operation = storage_operation::read_file_chunk;
+    request.request_id = request_id;
+    request.session_id = session_id;
+    request.media_generation = requested_generation;
+    request.offset = offset;
+    if (!normalize_path(path, request.path, sizeof(request.path))) {
+        return false;
+    }
+    return xQueueSend(request_queue, &request, 0) == pdTRUE;
+}
+
 bool storage_service_resolve_result(
     const result_handle& handle,
     const storage_directory_result*& result)
@@ -430,9 +463,25 @@ bool storage_service_resolve_result(
                        (slot.reference_state.load() & reference_count_mask) > 0U &&
                        !slot.filling.load();
     if (valid) {
-        result = &slot.result;
+        result = std::get_if<storage_directory_result>(&slot.result);
     }
-    return valid;
+    return valid && result != nullptr;
+}
+
+bool storage_service_resolve_file_result(
+    const result_handle& handle, const storage_file_chunk_result*& result)
+{
+    result = nullptr;
+    if (!result_handle_is_valid(handle) || handle.index >= result_pool.size()) {
+        return false;
+    }
+    const result_slot& slot = result_pool[handle.index];
+    if (slot.generation.load() == handle.generation &&
+        (slot.reference_state.load() & reference_count_mask) > 0U &&
+        !slot.filling.load()) {
+        result = std::get_if<storage_file_chunk_result>(&slot.result);
+    }
+    return result != nullptr;
 }
 
 bool storage_service_retain_result(const result_handle& handle)

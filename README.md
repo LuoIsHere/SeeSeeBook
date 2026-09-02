@@ -53,30 +53,30 @@ App logic and Services are separated from device-specific HAL and Renderer imple
 
 ### Prepare dependencies
 
-Have Python 3 and Git available on `PATH`. From the project root, run the shared Python script [scripts/fetch_dependences.py](scripts/fetch_dependences.py).
+Have Python 3 and Git available on `PATH`. From the project root, run the shared Python script [scripts/fetch_dependencies.py](scripts/fetch_dependencies.py).
 
 Before running: the script can fetch and switch an existing clean dependency repository to the configured tag. It stops on local changes, an origin mismatch, or a target directory that is not a Git repository; it does not overwrite those directories.
 
 Windows (Python 3 available as `python`):
 
 ```powershell
-python scripts/fetch_dependences.py
+python scripts/fetch_dependencies.py
 ```
 
 Unix-like systems (Python 3 available as `python3`):
 
 ```bash
-python3 scripts/fetch_dependences.py
+python3 scripts/fetch_dependencies.py
 ```
 
-The script reads [dependences.json](dependences.json), which currently lists:
+The script reads [dependencies.json](dependencies.json), which currently lists:
 
 | Dependency | Purpose | Source / tag | Destination |
 | --- | --- | --- | --- |
-| Mooncake | App lifecycle and switching framework | [Forairaaaaa/mooncake](https://github.com/Forairaaaaa/mooncake), `v2.3.3` | `dependences/mooncake/` |
+| Mooncake | App lifecycle and switching framework | [Forairaaaaa/mooncake](https://github.com/Forairaaaaa/mooncake), `v2.3.3` | `dependencies/mooncake/` |
 
 - Checks Git and the JSON configuration; installs no software.
-- Creates `dependences/` if missing, shallow-clones missing repositories at the configured tag, and verifies the origin and checked-out commit.
+- Creates `dependencies/` if missing, shallow-clones missing repositories at the configured tag, and verifies the origin and checked-out commit.
 - Reuses matching clean repositories; otherwise fetches the requested tag and checks it out in detached mode. Errors stop the script.
 - Initializes submodules only when enabled in the configuration; Mooncake has this disabled.
 

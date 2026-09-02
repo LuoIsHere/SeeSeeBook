@@ -3,10 +3,14 @@
 #include <mooncake.h>
 
 #include "app_event.hpp"
+#include "app_launch_context.hpp"
 
 class app_base : public mooncake::AppAbility {
 public:
     virtual void handle_app_event(const app_event& event) = 0;
+    // Called synchronously before Mooncake opens the target. A target must copy
+    // anything it needs; the runtime clears its launch context after this call.
+    virtual bool prepare_launch(const app_launch_context&) { return false; }
 
     void set_app_name(const char* name)
     {

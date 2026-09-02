@@ -30,6 +30,8 @@ private:
     std::uint32_t requested_generation_ = 0U;
     std::uint32_t popup_started_ms_ = 0U;
     bool popup_visible_ = false;
+    bool return_from_reader_ = false;
+    std::uint16_t restore_page_index_ = 0U;
 
     void handle_action(const ui_action_event& action);
     void handle_storage_status(const app_storage_status_event& event);

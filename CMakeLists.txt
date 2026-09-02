@@ -2,9 +2,9 @@
 # CMakeLists in this exact order for cmake to work correctly
 cmake_minimum_required(VERSION 3.16)
 
-set(MOONCAKE_COMPONENT_DIR "${CMAKE_CURRENT_LIST_DIR}/dependences/mooncake")
+set(MOONCAKE_COMPONENT_DIR "${CMAKE_CURRENT_LIST_DIR}/dependencies/mooncake")
 if(NOT EXISTS "${MOONCAKE_COMPONENT_DIR}/CMakeLists.txt")
-    message(FATAL_ERROR "Mooncake is missing; run scripts/fetch_dependences.py first")
+    message(FATAL_ERROR "Mooncake is missing; run scripts/fetch_dependencies.py first")
 endif()
 set(EXTRA_COMPONENT_DIRS
     "${CMAKE_CURRENT_LIST_DIR}/app"

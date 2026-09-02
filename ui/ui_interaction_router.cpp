@@ -19,8 +19,10 @@ bool control_has_feedback(ui_control_type control)
     switch (control) {
         case ui_control_type::navigate_back:
         case ui_control_type::menu_entry:
-            // Navigation is acknowledged by the destination Quality frame.
-            // Avoid a short inverse refresh immediately before that frame.
+        case ui_control_type::reader_previous_page:
+        case ui_control_type::reader_next_page:
+            // The destination or completed Reader page acknowledges the action.
+            // Avoid an extra inverse refresh immediately before that frame.
             return false;
         case ui_control_type::front_light:
         case ui_control_type::rtc_key:
@@ -46,6 +48,8 @@ bool activated_action_replaces_release_feedback(ui_control_type control)
         case ui_control_type::file_row:
         case ui_control_type::file_previous_page:
         case ui_control_type::file_next_page:
+        case ui_control_type::reader_previous_page:
+        case ui_control_type::reader_next_page:
             return true;
         case ui_control_type::none:
         case ui_control_type::rtc_field:
@@ -60,6 +64,7 @@ bool hit_test(
     std::int16_t y,
     const menu_view_state* menu_view,
     const file_view_state* file_view,
+    const reader_view_state* reader_view,
     ui_control_type& control,
     std::uint8_t& index)
 {
@@ -127,6 +132,19 @@ bool hit_test(
         }
         return false;
     }
+    if (active_view == ui_view_id::reader) {
+        if (reader_view != nullptr && reader_view->status == reader_view_status::ready) {
+            if (reader_view->previous_enabled && point_in_rect(x, y, reader_button_rect(1U))) {
+                control = ui_control_type::reader_previous_page;
+                return true;
+            }
+            if (reader_view->next_enabled && point_in_rect(x, y, reader_button_rect(2U))) {
+                control = ui_control_type::reader_next_page;
+                return true;
+            }
+        }
+        return false;
+    }
     if (active_view != ui_view_id::file) {
         return false;
     }
@@ -179,6 +197,10 @@ bool same_captured_control(std::int16_t x, std::int16_t y)
             return point_in_rect(x, y, file_previous_page_rect());
         case ui_control_type::file_next_page:
             return point_in_rect(x, y, file_next_page_rect());
+        case ui_control_type::reader_previous_page:
+            return point_in_rect(x, y, reader_button_rect(1U));
+        case ui_control_type::reader_next_page:
+            return point_in_rect(x, y, reader_button_rect(2U));
         case ui_control_type::test_surface: {
             const display_rect content = {
                 0, TEST_CONTENT_REGION_TOP, UI_DISPLAY_WIDTH, TEST_CONTENT_REGION_HEIGHT,
@@ -220,7 +242,8 @@ bool ui_interaction_process(const input_event& input, ui_action_event& action)
     if (input.gesture == input_gesture_type::press) {
         ui_presentation_read_guard presented(active_view);
         const bool requires_view_state = active_view == ui_view_id::menu ||
-                                         active_view == ui_view_id::file;
+                                         active_view == ui_view_id::file ||
+                                         active_view == ui_view_id::reader;
         if (requires_view_state && !presented.valid()) {
             return false;
         }
@@ -231,6 +254,7 @@ bool ui_interaction_process(const input_event& input, ui_action_event& action)
                 input.start_y,
                 presented.menu_view(),
                 presented.file_view(),
+                presented.reader_view(),
                 captured_control,
                 captured_index)) {
             return false;

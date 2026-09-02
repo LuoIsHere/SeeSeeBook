@@ -5,10 +5,15 @@ idf_component_register(
         "input/input_service.cpp"
         "rtc/rtc_service.cpp"
         "storage/storage_service.cpp"
+        "storage/storage_file_reader.cpp"
+        "reading_progress/reading_progress_service.cpp"
         "system_tick/system_tick_service.cpp"
     INCLUDE_DIRS "include/services"
     REQUIRES
         core
         m5_hal
         esp_driver_gptimer
+    PRIV_REQUIRES
+        nvs_flash
+        mbedtls
 )

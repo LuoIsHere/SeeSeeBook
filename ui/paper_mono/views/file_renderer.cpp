@@ -5,6 +5,7 @@
 
 #include "layout.hpp"
 #include "renderer_helpers.hpp"
+#include "text_layout_internal.hpp"
 
 namespace paper_mono_views {
 
@@ -62,18 +63,10 @@ void draw_file_row(
     surface.set_text_size(FILE_ROW_TEXT_SIZE);
     surface.set_text_alignment(display_text_alignment::middle_left);
     surface.set_text_color(foreground, background);
-    char name[FILE_VIEW_NAME_LENGTH + 4U] = {};
-    std::snprintf(name, sizeof(name), "%s%s", row.name, row.name_truncated ? "..." : "");
-    while (surface.text_width(name) > rect.width - 36 && std::strlen(name) > 3U) {
-        const std::size_t length = std::strlen(name);
-        std::size_t cut = length - 4U;
-        while (cut > 0U && (static_cast<unsigned char>(name[cut]) & 0xc0U) == 0x80U) {
-            --cut;
-        }
-        std::memcpy(name + cut, "...", 4U);
-    }
-    surface.draw_text(name, rect.left + 4, rect.top + rect.height / 2);
+    paper_mono_draw_cjk_text(surface, row.name, std::strlen(row.name),
+                             rect.left + 4, rect.top + rect.height / 2);
     if (row.directory) {
+        surface.set_font(display_font::cjk_24);
         surface.set_text_alignment(display_text_alignment::middle_right);
         surface.draw_text(">", rect.left + rect.width - 4, rect.top + rect.height / 2);
     }

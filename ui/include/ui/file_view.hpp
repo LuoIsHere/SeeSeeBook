@@ -22,7 +22,6 @@ struct file_row_view_state {
     bool directory;
     bool parent;
     bool enabled;
-    bool name_truncated;
 };
 
 struct file_view_state {

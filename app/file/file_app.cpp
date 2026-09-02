@@ -7,7 +7,9 @@
 #include <esp_log.h>
 
 #include "app.hpp"
+#include "file_name.hpp"
 #include "system_tick_service.hpp"
+#include "text_layout_provider.hpp"
 
 namespace {
 
@@ -88,7 +90,10 @@ void file_app::on_open()
 {
     ++session_id_;
     release_directory_result();
-    current_path_ = "/";
+    if (!return_from_reader_) {
+        current_path_ = "/";
+        restore_page_index_ = 0U;
+    }
     page_index_ = 0U;
     popup_visible_ = false;
     status_ = view_status(storage_service_get_state());
@@ -112,7 +117,9 @@ void file_app::on_close()
 {
     ++session_id_;
     release_directory_result();
-    current_path_ = "/";
+    if (!return_from_reader_) {
+        current_path_ = "/";
+    }
     page_index_ = 0U;
     popup_visible_ = false;
     status_ = file_view_status::no_card;
@@ -140,6 +147,12 @@ void file_app::handle_action(const ui_action_event& action)
 
 void file_app::handle_storage_status(const app_storage_status_event& event)
 {
+    if (event.media_generation != storage_service_get_media_generation() ||
+        event.state != storage_service_get_state()) {
+        return;
+    }
+    return_from_reader_ = false;
+    restore_page_index_ = 0U;
     requested_generation_ = event.media_generation;
     release_directory_result();
     current_path_ = "/";
@@ -157,7 +170,8 @@ void file_app::handle_directory_result(const app_storage_result_event& event)
     const storage_directory_result* result = nullptr;
     if (!storage_service_resolve_result(event.handle, result) || result == nullptr ||
         result->session_id != session_id_ || result->request_id != request_id_ ||
-        result->media_generation != requested_generation_) {
+        result->media_generation != requested_generation_ ||
+        result->media_generation != storage_service_get_media_generation()) {
         return;
     }
     if (result->code == storage_result_code::ok) {
@@ -183,13 +197,16 @@ void file_app::handle_directory_result(const app_storage_result_event& event)
                 return;
             case storage_result_code::io_error:
             case storage_result_code::no_memory:
+            case storage_result_code::file_not_found:
                 status_ = file_view_status::directory_error;
                 break;
             case storage_result_code::ok:
                 break;
         }
     }
-    page_index_ = 0U;
+    page_index_ = std::min<std::uint16_t>(restore_page_index_, page_count() - 1U);
+    restore_page_index_ = 0U;
+    return_from_reader_ = false;
     submit_frame(ui_update_reason::content_changed);
 }
 
@@ -210,9 +227,14 @@ void file_app::request_directory(const std::string& path)
 
 void file_app::activate_row(std::uint8_t row_index)
 {
+    if (row_index >= FILE_VIEW_ROW_COUNT) {
+        return;
+    }
     const storage_directory_result* result = nullptr;
     if (status_ != file_view_status::ready ||
-        !storage_service_resolve_result(directory_handle_, result) || result == nullptr) {
+        !storage_service_resolve_result(directory_handle_, result) || result == nullptr ||
+        result->media_generation != storage_service_get_media_generation() ||
+        storage_service_get_state() != storage_state::ready) {
         status_ = file_view_status::directory_error;
         submit_frame(ui_update_reason::content_changed);
         return;
@@ -234,7 +256,7 @@ void file_app::activate_row(std::uint8_t row_index)
         return;
     }
     const file_entry& entry = result->entries[entry_index];
-    if (entry.type == file_entry_type::file) {
+    if (entry.type == file_entry_type::file && !file_name_is_txt(entry.name)) {
         popup_visible_ = true;
         popup_started_ms_ = system_tick_now_ms();
         submit_frame(ui_update_reason::popup_changed);
@@ -247,6 +269,13 @@ void file_app::activate_row(std::uint8_t row_index)
     child += entry.name;
     if (child.size() > STORAGE_MAX_PATH_LENGTH) {
         status_ = file_view_status::path_too_long;
+    } else if (entry.type == file_entry_type::file) {
+        if (app_request_open_reader(child.c_str(), requested_generation_)) {
+            restore_page_index_ = page_index_;
+            return_from_reader_ = true;
+            return;
+        }
+        status_ = file_view_status::directory_error;
     } else {
         request_directory(child);
     }
@@ -304,10 +333,10 @@ void file_app::build_view(file_view_state& view) const
             continue;
         }
         const file_entry& entry = result->entries[item - 1U];
-        copy_utf8_prefix(entry.name, row.name, sizeof(row.name));
         row.directory = entry.type == file_entry_type::directory;
+        format_file_name(entry.name, row.directory, row.name, sizeof(row.name),
+                         ui_file_name_text_layout());
         row.enabled = true;
-        row.name_truncated = entry.name.size() >= sizeof(row.name);
     }
 }
 

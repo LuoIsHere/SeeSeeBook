@@ -12,8 +12,8 @@ from typing import Dict, List, Optional
 
 
 schema_version = 1
-dependences_directory_name = "dependences"
-default_config_name = "dependences.json"
+dependencies_directory_name = "dependencies"
+default_config_name = "dependencies.json"
 module_name_pattern = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
 
@@ -23,7 +23,7 @@ def project_root_path() -> Path:
 
 def parse_arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Download fixed Git tags into the project dependences directory."
+        description="Download fixed Git tags into the project dependencies directory."
     )
     parser.add_argument(
         "--config",
@@ -196,13 +196,13 @@ def validate_tag(git_path: str, module: Dict) -> None:
         )
 
 
-def ensure_target_path(dependences_root: Path, module_name: str) -> Path:
-    target_path = (dependences_root / module_name).resolve()
+def ensure_target_path(dependencies_root: Path, module_name: str) -> Path:
+    target_path = (dependencies_root / module_name).resolve()
     try:
-        target_path.relative_to(dependences_root.resolve())
+        target_path.relative_to(dependencies_root.resolve())
     except ValueError as error:
         raise RuntimeError(
-            "Module target escapes the dependences directory: {}".format(module_name)
+            "Module target escapes the dependencies directory: {}".format(module_name)
         ) from error
     return target_path
 
@@ -301,14 +301,14 @@ def verify_repository(
 
 def clone_module(
     git_path: str,
-    dependences_root: Path,
+    dependencies_root: Path,
     target_path: Path,
     module: Dict,
 ) -> str:
     temporary_path = Path(
         tempfile.mkdtemp(
             prefix=".{}.download-".format(module["name"]),
-            dir=str(dependences_root),
+            dir=str(dependencies_root),
         )
     )
     try:
@@ -398,15 +398,15 @@ def synchronize_existing_module(
 
 def synchronize_module(
     git_path: str,
-    dependences_root: Path,
+    dependencies_root: Path,
     module: Dict,
 ) -> str:
-    target_path = ensure_target_path(dependences_root, module["name"])
+    target_path = ensure_target_path(dependencies_root, module["name"])
     if target_path.exists():
         return synchronize_existing_module(git_path, target_path, module)
     return clone_module(
         git_path,
-        dependences_root,
+        dependencies_root,
         target_path,
         module,
     )
@@ -441,13 +441,13 @@ def main() -> int:
             print("Configuration and Git checks passed; no files were downloaded.")
             return 0
 
-        dependences_root = (project_root / dependences_directory_name).resolve()
-        dependences_root.mkdir(parents=True, exist_ok=True)
-        print("Destination: {}".format(dependences_root))
+        dependencies_root = (project_root / dependencies_directory_name).resolve()
+        dependencies_root.mkdir(parents=True, exist_ok=True)
+        print("Destination: {}".format(dependencies_root))
 
         for module in modules:
             print("SYNC: {} tag={}".format(module["name"], module["tag"]))
-            head_commit = synchronize_module(git_path, dependences_root, module)
+            head_commit = synchronize_module(git_path, dependencies_root, module)
             print(
                 "READY: {} tag={} commit={}".format(
                     module["name"],

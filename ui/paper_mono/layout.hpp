@@ -95,6 +95,21 @@ static_assert(menu_view_entry_capacity == 4U);
 
 static_assert(FILE_ROW_COUNT == FILE_VIEW_ROW_COUNT);
 
+#define READER_MARGIN 24
+#define READER_TEXT_TOP 16
+#define READER_LINE_HEIGHT 30
+#define READER_NAVIGATION_HEIGHT (STATUS_BAR_HEIGHT * 2)
+#define READER_NAVIGATION_TOP (STATUS_BAR_TOP - READER_NAVIGATION_HEIGHT)
+#define READER_LINE_COUNT ((READER_NAVIGATION_TOP - READER_TEXT_TOP - 24) / READER_LINE_HEIGHT)
+
+static_assert(READER_LINE_COUNT <= READER_PAGE_LINE_CAPACITY);
+
+constexpr display_rect reader_button_rect(std::uint8_t index)
+{
+    return {static_cast<std::int16_t>(index * (UI_DISPLAY_WIDTH / 3)),
+            READER_NAVIGATION_TOP, UI_DISPLAY_WIDTH / 3, READER_NAVIGATION_HEIGHT};
+}
+
 // Returns true when a normalized screen coordinate is inside a half-open rectangle.
 constexpr bool ui_point_in_rect(
     std::int16_t x,
@@ -182,6 +197,8 @@ constexpr display_rect app_back_button_rect(ui_view_id view)
             return battery_back_button_rect();
         case ui_view_id::file:
             return file_back_button_rect();
+        case ui_view_id::reader:
+            return reader_button_rect(0U);
         case ui_view_id::menu:
             return {0, 0, 0, 0};
     }

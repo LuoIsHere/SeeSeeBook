@@ -43,6 +43,7 @@ struct ghost_debt {
     region_ghost_debt test_content;
     region_ghost_debt battery_content;
     region_ghost_debt file_content;
+    region_ghost_debt reader_content;
     bool status_cleanup_pending = false;
 };
 
@@ -154,6 +155,8 @@ region_ghost_debt& debt_for_region(ghost_debt& debt, display_update_region regio
             return debt.battery_content;
         case display_update_region::file_content:
             return debt.file_content;
+        case display_update_region::reader_content:
+            return debt.reader_content;
         case display_update_region::full:
             return debt.control;
     }
@@ -343,6 +346,9 @@ void draw_full_view(
         case ui_view_id::file:
             paper_mono_views::draw_file_view(canvas(), request.payload.file);
             break;
+        case ui_view_id::reader:
+            paper_mono_views::draw_reader_view(canvas(), request.payload.reader);
+            break;
     }
 }
 
@@ -359,6 +365,8 @@ display_rect content_rect(display_update_region region)
                     BATTERY_CONTENT_REGION_HEIGHT};
         case display_update_region::file_content:
             return {0, FILE_CONTENT_REGION_TOP, UI_DISPLAY_WIDTH, FILE_CONTENT_REGION_HEIGHT};
+        case display_update_region::reader_content:
+            return {0, 0, UI_DISPLAY_WIDTH, STATUS_BAR_TOP};
         case display_update_region::status_bar:
             return status_bar_rect();
         case display_update_region::full:
@@ -395,6 +403,9 @@ void draw_partial_request(const display_request& request, display_rect& rect)
             break;
         case display_update_region::file_content:
             paper_mono_views::draw_file_content(canvas(), request.payload.file);
+            break;
+        case display_update_region::reader_content:
+            paper_mono_views::draw_reader_view(canvas(), request.payload.reader);
             break;
         case display_update_region::control:
             if (request.view == ui_view_id::test) {
@@ -447,6 +458,8 @@ display_rect draw_control(
                 canvas(), latest.payload.file, true, request.pressed);
             return file_next_page_rect();
         case ui_control_type::none:
+        case ui_control_type::reader_previous_page:
+        case ui_control_type::reader_next_page:
         case ui_control_type::rtc_field:
         case ui_control_type::test_surface:
             break;
@@ -915,6 +928,25 @@ bool ui_write_file_frame(
         request->mode != refresh_mode::quality) {
         request->mode = refresh_mode::text;
         request->update_region = display_update_region::file_content;
+    }
+    return submit_request(handle, *request);
+}
+
+bool ui_write_reader_frame(
+    ui_update_reason reason, reader_frame_writer writer, const void* context)
+{
+    ui_frame_handle handle = invalid_ui_frame_handle();
+    display_request* request = nullptr;
+    if (!acquire_request(ui_view_id::reader, reason, handle, request) || request == nullptr) {
+        return false;
+    }
+    if (writer == nullptr || !writer(request->payload.reader, context)) {
+        release_frame(handle, "reader_writer_failure");
+        return false;
+    }
+    if (reason != ui_update_reason::view_opened && request->mode != refresh_mode::quality) {
+        request->mode = refresh_mode::text;
+        request->update_region = display_update_region::reader_content;
     }
     return submit_request(handle, *request);
 }

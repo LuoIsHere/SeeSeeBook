@@ -2,6 +2,9 @@
 
 #include <esp_log.h>
 #include <mooncake.h>
+#include <algorithm>
+#include <array>
+#include <cstring>
 
 #include "app_descriptor.hpp"
 #include "app_registry.hpp"
@@ -15,7 +18,10 @@ mooncake::Mooncake mooncake_runtime;
 app_record* foreground_record = nullptr;
 app_kind foreground_kind = app_kind::menu;
 app_kind pending_target = app_kind::menu;
-app_kind return_target = app_kind::menu;
+std::array<app_kind, 8U> return_history = {};
+std::size_t return_depth = 0U;
+app_launch_context reader_launch = {};
+bool has_reader_launch = false;
 bool has_pending_switch = false;
 
 void apply_pending_switch()
@@ -34,6 +40,18 @@ void apply_pending_switch()
     if (foreground_record == target) {
         has_pending_switch = false;
         return;
+    }
+    if (pending_target == app_kind::reader) {
+        const bool prepared = has_reader_launch && target->instance->prepare_launch(reader_launch);
+        reader_launch = {};
+        has_reader_launch = false;
+        if (!prepared) {
+            has_pending_switch = false;
+            if (return_depth > 0U) {
+                --return_depth;
+            }
+            return;
+        }
     }
     if (foreground_record != nullptr) {
         mooncake_runtime.closeApp(foreground_record->mooncake_id);
@@ -82,7 +100,17 @@ void app_request_switch(app_kind target)
     }
     if (target != app_kind::menu && foreground_record != nullptr &&
         foreground_kind != target) {
-        return_target = foreground_kind;
+        if (return_depth == return_history.size()) {
+            std::move(return_history.begin() + 1U, return_history.end(), return_history.begin());
+            --return_depth;
+        }
+        return_history[return_depth++] = foreground_kind;
+    } else if (target == app_kind::menu) {
+        return_depth = 0U;
+    }
+    if (target != app_kind::reader) {
+        reader_launch = {};
+        has_reader_launch = false;
     }
     pending_target = target;
     has_pending_switch = true;
@@ -90,7 +118,24 @@ void app_request_switch(app_kind target)
 
 void app_request_back()
 {
-    app_request_switch(return_target);
+    pending_target = return_depth == 0U ? app_kind::menu : return_history[--return_depth];
+    has_pending_switch = true;
+    reader_launch = {};
+    has_reader_launch = false;
+}
+
+bool app_request_open_reader(const char* path, std::uint32_t media_generation)
+{
+    if (path == nullptr || path[0] != '/' || has_pending_switch ||
+        foreground_kind == app_kind::reader || std::strlen(path) > STORAGE_MAX_PATH_LENGTH) {
+        return false;
+    }
+    reader_launch = {};
+    std::strcpy(reader_launch.file_path, path);
+    reader_launch.media_generation = media_generation;
+    has_reader_launch = true;
+    app_request_switch(app_kind::reader);
+    return has_pending_switch;
 }
 
 bool app_switch_pending()

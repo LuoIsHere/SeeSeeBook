@@ -70,7 +70,7 @@ bool acquire_presented_frame(
 ui_presentation_read_guard::ui_presentation_read_guard(ui_view_id view)
     : view_(view)
 {
-    if (view != ui_view_id::menu && view != ui_view_id::file) {
+    if (view != ui_view_id::menu && view != ui_view_id::file && view != ui_view_id::reader) {
         return;
     }
     ui_frame_handle handle = invalid_ui_frame_handle();
@@ -82,6 +82,8 @@ ui_presentation_read_guard::ui_presentation_read_guard(ui_view_id view)
         state_ = &frame->payload.menu;
     } else if (view == ui_view_id::file) {
         state_ = &frame->payload.file;
+    } else if (view == ui_view_id::reader) {
+        state_ = &frame->payload.reader;
     }
     generation_ = handle.generation;
     index_ = handle.index;
@@ -119,6 +121,12 @@ const file_view_state* ui_presentation_read_guard::file_view() const
     return valid() && view_ == ui_view_id::file
                ? static_cast<const file_view_state*>(state_)
                : nullptr;
+}
+
+const reader_view_state* ui_presentation_read_guard::reader_view() const
+{
+    return valid() && view_ == ui_view_id::reader
+               ? static_cast<const reader_view_state*>(state_) : nullptr;
 }
 
 std::uint32_t ui_presentation_select_view(ui_view_id view)

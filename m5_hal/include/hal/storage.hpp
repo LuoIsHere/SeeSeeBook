@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <cstddef>
 #include <type_traits>
 
 #include <esp_err.h>
@@ -38,3 +39,8 @@ esp_err_t hal_storage_read_directory(
     hal_storage_entry& entry,
     bool& end_reached);
 void hal_storage_close_directory(hal_storage_directory*& directory);
+
+// One bounded transaction. No file handle outlives the filesystem mutex.
+esp_err_t hal_storage_read_file_chunk(
+    const char* path, std::uint64_t offset, char* data, std::size_t capacity,
+    std::size_t& length, std::uint64_t& file_size, std::int64_t& modified_time);

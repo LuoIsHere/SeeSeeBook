@@ -4,6 +4,7 @@
 
 #include "file_view.hpp"
 #include "menu_view.hpp"
+#include "reader_view.hpp"
 #include "ui_action.hpp"
 
 class ui_presentation_read_guard final {
@@ -19,6 +20,7 @@ public:
     bool valid() const;
     const menu_view_state* menu_view() const;
     const file_view_state* file_view() const;
+    const reader_view_state* reader_view() const;
 
 private:
     std::uint32_t generation_ = 0U;

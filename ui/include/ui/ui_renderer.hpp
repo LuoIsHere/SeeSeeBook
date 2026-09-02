@@ -7,6 +7,7 @@
 #include "battery_view.hpp"
 #include "file_view.hpp"
 #include "menu_view.hpp"
+#include "reader_view.hpp"
 #include "rtc_view.hpp"
 #include "status_bar_view.hpp"
 #include "test_view.hpp"
@@ -46,6 +47,11 @@ bool ui_write_file_frame(
     ui_update_reason reason,
     file_frame_writer writer,
     const void* context);
+
+using reader_frame_writer = bool (*)(reader_view_state& state, const void* context);
+// Same synchronous writer and frame-pool ownership contract as FileApp.
+bool ui_write_reader_frame(
+    ui_update_reason reason, reader_frame_writer writer, const void* context);
 
 // Control feedback is driven by the UI interaction middleware, not by Apps.
 bool ui_render_control(

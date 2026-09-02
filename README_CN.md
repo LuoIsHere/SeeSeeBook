@@ -53,30 +53,30 @@ App --> View State --> UI Renderer (ui/) --> Display HAL
 
 ### 准备依赖
 
-请先准备 Python 3，并确保 Git 位于 `PATH`。在项目根目录运行共用的 Python 脚本 [scripts/fetch_dependences.py](scripts/fetch_dependences.py)。
+请先准备 Python 3，并确保 Git 位于 `PATH`。在项目根目录运行共用的 Python 脚本 [scripts/fetch_dependencies.py](scripts/fetch_dependencies.py)。
 
 执行前注意：脚本可能拉取并将已有的干净依赖仓库切换到配置指定的 tag。遇到本地改动、origin 不匹配，或目标目录不是 Git 仓库时会停止，不会覆盖这些目录。
 
 Windows（`python` 指向 Python 3）：
 
 ```powershell
-python scripts/fetch_dependences.py
+python scripts/fetch_dependencies.py
 ```
 
 Unix-like 系统（`python3` 指向 Python 3）：
 
 ```bash
-python3 scripts/fetch_dependences.py
+python3 scripts/fetch_dependencies.py
 ```
 
-脚本读取 [dependences.json](dependences.json)，其中列出的依赖为：
+脚本读取 [dependencies.json](dependencies.json)，其中列出的依赖为：
 
 | 依赖 | 用途 | 来源 / tag | 目标目录 |
 | --- | --- | --- | --- |
-| Mooncake | App 生命周期与应用切换框架 | [Forairaaaaa/mooncake](https://github.com/Forairaaaaa/mooncake)，`v2.3.3` | `dependences/mooncake/` |
+| Mooncake | App 生命周期与应用切换框架 | [Forairaaaaa/mooncake](https://github.com/Forairaaaaa/mooncake)，`v2.3.3` | `dependencies/mooncake/` |
 
 - 检查 Git 和 JSON 配置，不安装任何软件。
-- 自动创建缺失的 `dependences/`，按配置 tag 浅克隆缺失的仓库，并核对 origin 和检出的提交。
+- 自动创建缺失的 `dependencies/`，按配置 tag 浅克隆缺失的仓库，并核对 origin 和检出的提交。
 - 复用版本匹配的干净仓库；否则拉取指定 tag，并以 detached 模式检出。发生错误时停止。
 - 仅在配置启用时初始化子模块；Mooncake 的此选项为关闭。
 

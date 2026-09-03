@@ -44,3 +44,9 @@ void hal_storage_close_directory(hal_storage_directory*& directory);
 esp_err_t hal_storage_read_file_chunk(
     const char* path, std::uint64_t offset, char* data, std::size_t capacity,
     std::size_t& length, std::uint64_t& file_size, std::int64_t& modified_time);
+
+// Bounded internal-data operations. Each opens/closes under the filesystem lock.
+esp_err_t hal_storage_ensure_system_directory(const char* path);
+esp_err_t hal_storage_write_system_file(
+    const char* path, std::uint64_t offset, const void* data, std::size_t length, bool truncate);
+esp_err_t hal_storage_replace_system_file(const char* temporary, const char* destination);

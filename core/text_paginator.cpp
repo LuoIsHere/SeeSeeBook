@@ -1,4 +1,4 @@
-#include "reader_paginator.hpp"
+#include "text_paginator.hpp"
 
 #include <algorithm>
 #include <cstring>

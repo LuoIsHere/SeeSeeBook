@@ -82,6 +82,7 @@ void file_app::handle_app_event(const app_event& event)
             break;
         case app_event_type::rtc:
         case app_event_type::battery:
+        case app_event_type::book:
             break;
     }
 }

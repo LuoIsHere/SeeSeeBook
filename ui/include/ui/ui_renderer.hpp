@@ -64,5 +64,7 @@ bool ui_status_bar_update_time(
     std::uint8_t minute,
     bool valid);
 bool ui_status_bar_update_battery(const battery_snapshot& snapshot);
+bool ui_status_bar_set_foreground(ui_view_id app);
+bool ui_status_bar_update_reader_page(bool valid, std::uint32_t current, std::uint32_t total);
 status_bar_view_state ui_status_bar_get_state();
 void ui_renderer_notify_status_bar();

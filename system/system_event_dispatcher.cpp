@@ -64,6 +64,12 @@ bool collect_one_event(app_event& event)
         event.storage_result.handle = storage_result.handle;
         return true;
     }
+    book_service_event book = {};
+    if (book_service_try_get_event(book)) {
+        event.type = app_event_type::book;
+        event.book = book;
+        return true;
+    }
     return false;
 }
 

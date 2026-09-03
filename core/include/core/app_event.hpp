@@ -4,6 +4,7 @@
 #include <type_traits>
 
 #include "battery_snapshot.hpp"
+#include "book_types.hpp"
 #include "result_handle.hpp"
 #include "rtc_datetime.hpp"
 #include "storage_state.hpp"
@@ -15,6 +16,7 @@ enum class app_event_type : std::uint8_t {
     battery,
     storage_status,
     storage_result,
+    book,
 };
 
 enum class app_rtc_operation : std::uint8_t {
@@ -50,6 +52,7 @@ struct app_event {
     app_battery_event battery;
     app_storage_status_event storage_status;
     app_storage_result_event storage_result;
+    book_service_event book;
 };
 
 static_assert(std::is_trivially_copyable_v<app_rtc_event>);

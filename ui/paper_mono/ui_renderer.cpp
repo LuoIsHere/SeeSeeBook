@@ -13,6 +13,7 @@
 #include "layout.hpp"
 #include "renderer_internal.hpp"
 #include "status_bar.hpp"
+#include "reader_status_layout.hpp"
 #include "ui_frame_pool.hpp"
 #include "ui_presentation.hpp"
 #include "views/renderer_helpers.hpp"
@@ -283,7 +284,10 @@ bool status_states_equal(
         (!left.battery.level_valid || left.battery.percent == right.battery.percent) &&
         left.battery.charging_valid == right.battery.charging_valid &&
         (!left.battery.charging_valid || left.battery.charging == right.battery.charging);
-    return time_equal && battery_equal;
+    const bool reader_equal = left.foreground_app == right.foreground_app &&
+        left.reader_page_valid == right.reader_page_valid &&
+        (!left.reader_page_valid || (left.current_page == right.current_page && left.total_pages == right.total_pages));
+    return time_equal && battery_equal && reader_equal;
 }
 
 void draw_status_bar(const status_bar_view_state& state)
@@ -301,6 +305,17 @@ void draw_status_bar(const status_bar_view_state& state)
     }
     canvas().set_text_alignment(display_text_alignment::middle_left);
     canvas().draw_text(buffer, STATUS_BAR_LEFT_MARGIN, STATUS_BAR_TOP + STATUS_BAR_HEIGHT / 2);
+
+    const auto page = make_reader_status_layout(state, UI_DISPLAY_WIDTH);
+    if (page.visible) {
+        const auto center_y = STATUS_BAR_TOP + STATUS_BAR_HEIGHT / 2;
+        canvas().set_text_alignment(display_text_alignment::middle_right);
+        canvas().draw_text(page.current, page.current_right, center_y);
+        canvas().set_text_alignment(display_text_alignment::middle_center);
+        canvas().draw_text("/", page.slash_x, center_y);
+        canvas().set_text_alignment(display_text_alignment::middle_left);
+        canvas().draw_text(page.total, page.total_left, center_y);
+    }
 
     if (state.battery.level_valid) {
         std::snprintf(buffer, sizeof(buffer), "%u%%", state.battery.percent);

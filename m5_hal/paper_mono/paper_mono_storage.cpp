@@ -7,6 +7,7 @@
 #include <new>
 #include <limits>
 #include <sys/stat.h>
+#include <unistd.h>
 
 #include <M5Unified.h>
 #include <driver/sdmmc_default_configs.h>
@@ -294,4 +295,73 @@ esp_err_t hal_storage_read_file_chunk(
     }
     xSemaphoreGive(filesystem_mutex);
     return result;
+}
+
+namespace {
+bool system_path(const char* path)
+{
+    return path != nullptr &&
+        (std::strcmp(path, "/.system") == 0 || std::strncmp(path, "/.system/", 9U) == 0) &&
+        std::strstr(path, "/../") == nullptr && std::strstr(path, "/./") == nullptr;
+}
+
+class filesystem_guard {
+public:
+    filesystem_guard()
+        : locked_(xSemaphoreTake(filesystem_mutex, pdMS_TO_TICKS(filesystem_lock_timeout_ms)) == pdTRUE) {}
+    ~filesystem_guard() { if (locked_) { xSemaphoreGive(filesystem_mutex); } }
+    bool ready() const { return locked_ && mounted_card != nullptr; }
+private:
+    bool locked_;
+};
+}  // namespace
+
+esp_err_t hal_storage_ensure_system_directory(const char* path)
+{
+    char full_path[SD_PATH_LENGTH + sizeof(SD_MOUNT_POINT)] = {};
+    if (!system_path(path) || !build_full_path(path, full_path, sizeof(full_path))) { return ESP_ERR_INVALID_ARG; }
+    filesystem_guard guard;
+    if (!guard.ready()) { return ESP_ERR_INVALID_STATE; }
+    if (mkdir(full_path, 0755) == 0) { return ESP_OK; }
+    struct stat info = {};
+    return errno == EEXIST && stat(full_path, &info) == 0 && S_ISDIR(info.st_mode) ? ESP_OK : ESP_FAIL;
+}
+
+esp_err_t hal_storage_write_system_file(
+    const char* path, std::uint64_t offset, const void* data, std::size_t length, bool truncate)
+{
+    char full_path[SD_PATH_LENGTH + sizeof(SD_MOUNT_POINT)] = {};
+    if (!system_path(path) || !build_full_path(path, full_path, sizeof(full_path)) || data == nullptr ||
+        length > 4096U || offset > static_cast<std::uint64_t>(std::numeric_limits<off_t>::max()) ||
+        length > static_cast<std::uint64_t>(std::numeric_limits<off_t>::max()) - offset) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    filesystem_guard guard;
+    if (!guard.ready()) { return ESP_ERR_INVALID_STATE; }
+    FILE* stream = std::fopen(full_path, truncate ? "wb" : "r+b");
+    if (stream == nullptr) { return ESP_FAIL; }
+    esp_err_t result = ESP_OK;
+    if (fseeko(stream, static_cast<off_t>(offset), SEEK_SET) != 0 ||
+        std::fwrite(data, 1U, length, stream) != length || std::fflush(stream) != 0 ||
+        fsync(fileno(stream)) != 0) { result = ESP_FAIL; }
+    if (std::fclose(stream) != 0) { result = ESP_FAIL; }
+    return result;
+}
+
+esp_err_t hal_storage_replace_system_file(const char* temporary, const char* destination)
+{
+    char from[SD_PATH_LENGTH + sizeof(SD_MOUNT_POINT)] = {};
+    char to[SD_PATH_LENGTH + sizeof(SD_MOUNT_POINT)] = {};
+    if (!system_path(temporary) || !system_path(destination) || std::strcmp(temporary, destination) == 0 ||
+        !build_full_path(temporary, from, sizeof(from)) || !build_full_path(destination, to, sizeof(to))) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    filesystem_guard guard;
+    if (!guard.ready()) { return ESP_ERR_INVALID_STATE; }
+    struct stat info = {};
+    if (stat(from, &info) != 0 || !S_ISREG(info.st_mode)) { return ESP_FAIL; }
+    // FAT rename need not replace an existing target. A power loss in this gap
+    // leaves a missing final file, which the Service treats as a cache miss.
+    if (std::remove(to) != 0 && errno != ENOENT) { return ESP_FAIL; }
+    return std::rename(from, to) == 0 ? ESP_OK : ESP_FAIL;
 }

@@ -6,7 +6,6 @@ idf_component_register(
         "file/file_app.cpp"
         "file/file_name.cpp"
         "reader/reader_app.cpp"
-        "reader/reader_paginator.cpp"
         "menu/menu_app.cpp"
         "rtc_setting/rtc_setting_app.cpp"
         "test/test_app.cpp"

@@ -86,3 +86,31 @@ status_bar_view_state ui_status_bar_get_state()
 {
     return status_bar_get_state();
 }
+
+bool ui_status_bar_set_foreground(ui_view_id app)
+{
+    portENTER_CRITICAL(&state_mutex);
+    const bool changed = current_state.foreground_app != app || current_state.reader_page_valid;
+    current_state.foreground_app = app;
+    current_state.reader_page_valid = false;
+    current_state.current_page = current_state.total_pages = 0U;
+    portEXIT_CRITICAL(&state_mutex);
+    return changed;
+}
+
+bool ui_status_bar_update_reader_page(bool valid, std::uint32_t current, std::uint32_t total)
+{
+    portENTER_CRITICAL(&state_mutex);
+    valid = valid && current_state.foreground_app == ui_view_id::reader && current > 0U && current <= total;
+    const bool changed = current_state.reader_page_valid != valid ||
+                         (valid && (current_state.current_page != current || current_state.total_pages != total));
+    current_state.reader_page_valid = valid;
+    current_state.current_page = current;
+    current_state.total_pages = total;
+    portEXIT_CRITICAL(&state_mutex);
+    if (changed && valid && (current > 999999U || total > 999999U)) {
+        ESP_LOGW(log_tag, "Reader page region hidden: current=%lu total=%lu",
+                 static_cast<unsigned long>(current), static_cast<unsigned long>(total));
+    }
+    return changed;
+}

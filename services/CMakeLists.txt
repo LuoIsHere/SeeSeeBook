@@ -6,7 +6,9 @@ idf_component_register(
         "rtc/rtc_service.cpp"
         "storage/storage_service.cpp"
         "storage/storage_file_reader.cpp"
-        "reading_progress/reading_progress_service.cpp"
+        "book/book_service.cpp"
+        "book/book_format.cpp"
+        "book/book_index_engine.cpp"
         "system_tick/system_tick_service.cpp"
     INCLUDE_DIRS "include/services"
     REQUIRES
@@ -14,6 +16,6 @@ idf_component_register(
         m5_hal
         esp_driver_gptimer
     PRIV_REQUIRES
-        nvs_flash
+        json
         mbedtls
 )

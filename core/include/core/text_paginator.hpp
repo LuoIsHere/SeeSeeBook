@@ -3,7 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 
-#include "reader_view.hpp"
+#include "reader_page.hpp"
 #include "text_layout.hpp"
 
 enum class reader_parse_status : std::uint8_t { need_data, page_ready, invalid_utf8 };

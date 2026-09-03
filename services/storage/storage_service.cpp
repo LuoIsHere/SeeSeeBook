@@ -17,6 +17,7 @@
 
 #include "storage.hpp"
 #include "storage_file_reader.hpp"
+#include "storage_book_access.hpp"
 #include "system_config.hpp"
 #include "system_tick_service.hpp"
 
@@ -59,6 +60,8 @@ QueueHandle_t request_queue = nullptr;
 QueueHandle_t result_queue = nullptr;
 QueueHandle_t status_queue = nullptr;
 SemaphoreHandle_t result_pool_mutex = nullptr;
+SemaphoreHandle_t media_access_mutex = nullptr;
+std::atomic_uint32_t foreground_requests{0U};
 TaskHandle_t monitor_task_handle = nullptr;
 std::array<result_slot, STORAGE_RESULT_POOL_SIZE> result_pool;
 std::atomic<storage_state> current_state{storage_state::no_card};
@@ -234,7 +237,9 @@ storage_result_code scan_directory(
             break;
         }
         if (std::strcmp(raw_entry.name, ".") == 0 ||
-            std::strcmp(raw_entry.name, "..") == 0) {
+            std::strcmp(raw_entry.name, "..") == 0 ||
+            (std::strcmp(request.path, "/") == 0 && raw_entry.directory &&
+             strcasecmp(raw_entry.name, ".system") == 0)) {
             continue;
         }
         if (result.entries.size() >= STORAGE_MAX_DIRECTORY_ENTRIES) {
@@ -275,6 +280,7 @@ void storage_worker_task(void*)
         result_slot* slot = mutable_result_slot(handle);
         if (slot == nullptr) {
             ESP_LOGW(log_tag, "result pool exhausted");
+            foreground_requests.fetch_sub(1U);
             continue;
         }
         if (request.operation == storage_operation::read_file_chunk) {
@@ -296,20 +302,24 @@ void storage_worker_task(void*)
                      static_cast<unsigned>(result.code));
         }
         publish_result(handle);
+        foreground_requests.fetch_sub(1U);
     }
 }
 
 void handle_card_change(bool inserted)
 {
+    xSemaphoreTake(media_access_mutex, portMAX_DELAY);
     media_generation.fetch_add(1U);
     if (!inserted) {
         publish_status(storage_state::no_card);
         const esp_err_t result = hal_storage_unmount();
         unmount_pending = result == ESP_ERR_TIMEOUT;
+        xSemaphoreGive(media_access_mutex);
         return;
     }
     if (unmount_pending && hal_storage_unmount() != ESP_OK) {
         publish_status(storage_state::error, ESP_ERR_INVALID_STATE);
+        xSemaphoreGive(media_access_mutex);
         return;
     }
     unmount_pending = false;
@@ -318,6 +328,7 @@ void handle_card_change(bool inserted)
     publish_status(
         result == ESP_OK ? storage_state::ready : storage_state::error,
         result);
+    xSemaphoreGive(media_access_mutex);
 }
 
 void storage_monitor_task(void*)
@@ -328,8 +339,10 @@ void storage_monitor_task(void*)
     std::uint8_t matching_samples = 0U;
     for (;;) {
         ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
-        if (unmount_pending && hal_storage_unmount() == ESP_OK) {
-            unmount_pending = false;
+        if (unmount_pending) {
+            xSemaphoreTake(media_access_mutex, portMAX_DELAY);
+            if (hal_storage_unmount() == ESP_OK) { unmount_pending = false; }
+            xSemaphoreGive(media_access_mutex);
         }
         bool inserted = false;
         if (!hal_storage_card_inserted(inserted)) {
@@ -360,8 +373,9 @@ esp_err_t storage_service_init()
     result_queue = xQueueCreate(result_queue_length, sizeof(result_handle));
     status_queue = xQueueCreate(status_queue_length, sizeof(storage_status_event));
     result_pool_mutex = xSemaphoreCreateMutex();
+    media_access_mutex = xSemaphoreCreateMutex();
     if (request_queue == nullptr || result_queue == nullptr ||
-        status_queue == nullptr || result_pool_mutex == nullptr) {
+        status_queue == nullptr || result_pool_mutex == nullptr || media_access_mutex == nullptr) {
         return ESP_ERR_NO_MEM;
     }
     if (xTaskCreate(
@@ -419,7 +433,10 @@ bool storage_service_list_directory(
     if (!normalize_path(path, request.path, sizeof(request.path))) {
         return false;
     }
-    return xQueueSend(request_queue, &request, 0) == pdTRUE;
+    foreground_requests.fetch_add(1U);
+    if (xQueueSend(request_queue, &request, 0) == pdTRUE) { return true; }
+    foreground_requests.fetch_sub(1U);
+    return false;
 }
 
 bool storage_service_try_get_result_event(storage_result_event& event)
@@ -445,7 +462,31 @@ bool storage_service_read_file_chunk(
     if (!normalize_path(path, request.path, sizeof(request.path))) {
         return false;
     }
-    return xQueueSend(request_queue, &request, 0) == pdTRUE;
+    foreground_requests.fetch_add(1U);
+    if (xQueueSend(request_queue, &request, 0) == pdTRUE) { return true; }
+    foreground_requests.fetch_sub(1U);
+    return false;
+}
+
+bool storage_book_access_begin(std::uint32_t generation)
+{
+    for (;;) {
+        if (current_state.load() != storage_state::ready || generation != media_generation.load()) { return false; }
+        if (foreground_requests.load() != 0U) { vTaskDelay(1U); continue; }
+        if (xSemaphoreTake(media_access_mutex, pdMS_TO_TICKS(20U)) != pdTRUE) { continue; }
+        if (current_state.load() != storage_state::ready || generation != media_generation.load()) {
+            xSemaphoreGive(media_access_mutex);
+            return false;
+        }
+        if (foreground_requests.load() == 0U) { return true; }
+        xSemaphoreGive(media_access_mutex);
+        vTaskDelay(1U);
+    }
+}
+
+void storage_book_access_end()
+{
+    xSemaphoreGive(media_access_mutex);
 }
 
 bool storage_service_resolve_result(

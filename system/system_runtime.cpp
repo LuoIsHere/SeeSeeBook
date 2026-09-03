@@ -9,6 +9,7 @@
 
 #include "app.hpp"
 #include "battery_service.hpp"
+#include "book_service.hpp"
 #include "hal.hpp"
 #include "input_service.hpp"
 #include "rtc_service.hpp"
@@ -65,6 +66,7 @@ esp_err_t system_runtime_init()
     ESP_RETURN_ON_ERROR(ui_renderer_init(), log_tag, "UI renderer initialization failed");
     ESP_RETURN_ON_ERROR(input_service_init(), log_tag, "input service initialization failed");
     ESP_RETURN_ON_ERROR(storage_service_init(), log_tag, "storage service initialization failed");
+    ESP_RETURN_ON_ERROR(book_service_init(), log_tag, "book service initialization failed");
     ESP_RETURN_ON_ERROR(rtc_service_init(), log_tag, "RTC service initialization failed");
     ESP_RETURN_ON_ERROR(battery_service_init(), log_tag, "battery service initialization failed");
     ESP_RETURN_ON_ERROR(app_init(), log_tag, "application initialization failed");

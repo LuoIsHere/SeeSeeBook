@@ -24,8 +24,9 @@ enum class ui_control_type : std::uint8_t {
     file_row,
     file_previous_page,
     file_next_page,
-    reader_previous_page,
-    reader_next_page,
+    reader_previous_zone,
+    reader_menu_zone,
+    reader_next_zone,
     test_surface,
 };
 

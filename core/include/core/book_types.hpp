@@ -7,7 +7,7 @@
 constexpr std::uint32_t BOOK_METADATA_SCHEMA_VERSION = 1U;
 constexpr std::uint32_t BOOK_PAGE_INDEX_FORMAT_VERSION = 1U;
 // Increment whenever font metrics, layout or the shared paginator changes.
-constexpr std::uint32_t BOOK_PAGINATION_VERSION = 1U;
+constexpr std::uint32_t BOOK_PAGINATION_VERSION = 2U;
 constexpr std::size_t BOOK_PATH_CAPACITY = 513U;
 constexpr std::size_t BOOK_SCAN_BUFFER_SIZE = 4096U;
 

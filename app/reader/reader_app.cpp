@@ -30,6 +30,8 @@ void reader_app::on_open()
 {
     ++session_id_;
     active_ = true;
+    menu_visible_ = false;
+    view_ = {};
     media_valid_ = true;
     metadata_known_ = false;
     position_valid_ = false;
@@ -67,6 +69,7 @@ void reader_app::on_open()
 void reader_app::on_close()
 {
     active_ = false;
+    menu_visible_ = false;
     waiting_ = busy_ = frame_pending_ = false;
     if (position_valid_ && book_submitted_ &&
         !book_service_close(session_id_, media_generation_, current_offset_)) {
@@ -122,7 +125,7 @@ void reader_app::on_running()
         }
     }
     if (frame_pending_) {
-        submit_frame(pending_reason_);
+        frame_pending_ = !ui_write_reader_frame(pending_reason_, write_frame, this);
     }
     if (index_lookup_ && !loading_shown_ && now - loading_started_ms_ >= loading_delay_ms) {
         loading_shown_ = true;
@@ -165,20 +168,25 @@ void reader_app::handle_action(const ui_action_event& action)
         return;
     }
     if (action.control == ui_control_type::navigate_back) {
-        app_request_back();
+        if (menu_visible_) { app_request_back(); }
         return;
     }
-    if (busy_ || status_ != reader_view_status::ready || !check_media()) {
+    if (action.control == ui_control_type::reader_menu_zone) {
+        menu_visible_ = !menu_visible_;
+        submit_frame(ui_update_reason::popup_changed);
         return;
     }
-    if (action.control == ui_control_type::reader_next_page && !end_of_file_) {
+    if (menu_visible_ || busy_ || status_ != reader_view_status::ready || !check_media()) {
+        return;
+    }
+    if (action.control == ui_control_type::reader_next_zone && !end_of_file_) {
         user_navigated_ = true;
         if (index_valid_ && index_position_valid_ && !book_waiting_ && current_page_ + 1U < total_pages_) {
             indexed_operation_ = page_operation::next;
             if (query_index(true, current_page_ + 1U)) { return; }
         }
         start_page(next_offset_, page_operation::next);
-    } else if (action.control == ui_control_type::reader_previous_page && current_offset_ > 0U) {
+    } else if (action.control == ui_control_type::reader_previous_zone && current_offset_ > 0U) {
         user_navigated_ = true;
         if (index_valid_ && index_position_valid_ && !book_waiting_ && current_page_ > 0U) {
             indexed_operation_ = page_operation::previous;
@@ -309,8 +317,23 @@ void reader_app::fail(reader_view_status status)
 
 void reader_app::submit_frame(ui_update_reason reason)
 {
+    if (reason != ui_update_reason::popup_changed) {
+        view_ = {};
+        view_.status = status_;
+        view_.file_size = identity_.file_size;
+        view_.progress_persistent = progress_persistent_;
+        if (status_ == reader_view_status::ready || status_ == reader_view_status::empty_file) {
+            view_.page = paginator_.page();
+            view_.previous_enabled = current_offset_ > 0U;
+            view_.next_enabled = !end_of_file_;
+        }
+    }
+    view_.menu_visible = menu_visible_;
     if (frame_pending_ && pending_reason_ == ui_update_reason::view_opened) {
         reason = ui_update_reason::view_opened;
+    } else if (frame_pending_ && pending_reason_ == ui_update_reason::content_changed &&
+               reason == ui_update_reason::popup_changed) {
+        reason = ui_update_reason::content_changed;
     }
     pending_reason_ = reason;
     frame_pending_ = !ui_write_reader_frame(reason, write_frame, this);
@@ -319,15 +342,7 @@ void reader_app::submit_frame(ui_update_reason reason)
 bool reader_app::write_frame(reader_view_state& view, const void* context)
 {
     const auto& instance = *static_cast<const reader_app*>(context);
-    view = {};
-    view.status = instance.status_;
-    view.file_size = instance.identity_.file_size;
-    view.progress_persistent = instance.progress_persistent_;
-    if (view.status == reader_view_status::ready || view.status == reader_view_status::empty_file) {
-        view.page = instance.paginator_.page();
-        view.previous_enabled = instance.current_offset_ > 0U;
-        view.next_enabled = !instance.end_of_file_;
-    }
+    view = instance.view_;
     return true;
 }
 

@@ -37,6 +37,7 @@ enum class display_update_region : std::uint8_t {
     battery_content,
     file_content,
     reader_content,
+    reader_menu,
 };
 
 union display_view_payload {

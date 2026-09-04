@@ -32,7 +32,7 @@ std::uint16_t glyph_width(std::uint32_t codepoint)
 
 text_layout_profile ui_reader_text_layout()
 {
-    return {UI_DISPLAY_WIDTH - READER_MARGIN * 2, READER_LINE_COUNT, glyph_width};
+    return {reader_text_rect().width, READER_LINE_COUNT, glyph_width};
 }
 
 text_layout_profile ui_file_name_text_layout()

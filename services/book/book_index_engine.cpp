@@ -165,7 +165,10 @@ void book_index_engine::open(const char* path, const char* book_id, const text_l
     const bool same_content = have_metadata && old.file.file_size == metadata_.file.file_size &&
         (same_stat || book_fingerprint_equal(old.file.fingerprint, metadata_.file.fingerprint));
     candidate = candidate && same_content;
-    if (same_content) { resume_ = old.progress; }
+    // A pagination version change discards the old progress as well as the index.
+    if (same_content && old.pagination_version == BOOK_PAGINATION_VERSION) {
+        resume_ = old.progress;
+    }
     position_ = resume_;
     metadata_.index_format_version = BOOK_PAGE_INDEX_FORMAT_VERSION;
     metadata_.pagination_version = BOOK_PAGINATION_VERSION;

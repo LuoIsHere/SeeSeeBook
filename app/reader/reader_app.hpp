@@ -24,6 +24,9 @@ private:
     reader_paginator paginator_;
     reader_page_history history_;
     text_layout_profile layout_ = {};
+    // Stable body snapshot: a menu toggle must not expose an in-flight paginator.
+    reader_view_state view_ = {};
+    bool menu_visible_ = false;
     std::uint64_t current_offset_ = 0U;
     std::uint64_t next_offset_ = 0U;
     std::uint64_t requested_offset_ = 0U;

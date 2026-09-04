@@ -157,6 +157,8 @@ region_ghost_debt& debt_for_region(ghost_debt& debt, display_update_region regio
         case display_update_region::file_content:
             return debt.file_content;
         case display_update_region::reader_content:
+        case display_update_region::reader_menu:
+            // These rectangles overlap, so menu toggles and page flips share debt.
             return debt.reader_content;
         case display_update_region::full:
             return debt.control;
@@ -381,7 +383,9 @@ display_rect content_rect(display_update_region region)
         case display_update_region::file_content:
             return {0, FILE_CONTENT_REGION_TOP, UI_DISPLAY_WIDTH, FILE_CONTENT_REGION_HEIGHT};
         case display_update_region::reader_content:
-            return {0, 0, UI_DISPLAY_WIDTH, STATUS_BAR_TOP};
+            return reader_content_rect();
+        case display_update_region::reader_menu:
+            return reader_menu_rect();
         case display_update_region::status_bar:
             return status_bar_rect();
         case display_update_region::full:
@@ -392,10 +396,10 @@ display_rect content_rect(display_update_region region)
     return {0, 0, UI_DISPLAY_WIDTH, UI_DISPLAY_HEIGHT};
 }
 
-void draw_partial_request(const display_request& request, display_rect& rect)
+void draw_partial_request(const display_request& request, display_update_region region, display_rect& rect)
 {
-    rect = content_rect(request.update_region);
-    switch (request.update_region) {
+    rect = content_rect(region);
+    switch (region) {
         case display_update_region::rtc_editor:
         case display_update_region::rtc_editor_and_key:
             paper_mono_views::draw_rtc_editor(canvas(), request.payload.rtc);
@@ -420,6 +424,9 @@ void draw_partial_request(const display_request& request, display_rect& rect)
             paper_mono_views::draw_file_content(canvas(), request.payload.file);
             break;
         case display_update_region::reader_content:
+        case display_update_region::reader_menu:
+            // Recompose the body before the overlay, also restoring covered text
+            // when hidden. Only rect is sent to the panel for partial updates.
             paper_mono_views::draw_reader_view(canvas(), request.payload.reader);
             break;
         case display_update_region::control:
@@ -473,8 +480,9 @@ display_rect draw_control(
                 canvas(), latest.payload.file, true, request.pressed);
             return file_next_page_rect();
         case ui_control_type::none:
-        case ui_control_type::reader_previous_page:
-        case ui_control_type::reader_next_page:
+        case ui_control_type::reader_previous_zone:
+        case ui_control_type::reader_menu_zone:
+        case ui_control_type::reader_next_zone:
         case ui_control_type::rtc_field:
         case ui_control_type::test_surface:
             break;
@@ -663,6 +671,20 @@ bool submit_request(
     return true;
 }
 
+display_update_region resolve_request_region(
+    const display_request& next, const display_request* latest, bool has_frame, bool quality_pending)
+{
+    if (quality_pending) { return display_update_region::full; }
+    if (next.update_region == display_update_region::reader_menu &&
+        (!has_frame || latest == nullptr || latest->view != ui_view_id::reader ||
+         !reader_body_matches(latest->payload.reader, next.payload.reader))) {
+        // A queued content frame can be superseded by a menu frame.
+        // Compare against the last successful display, not the queue.
+        return display_update_region::reader_content;
+    }
+    return next.update_region;
+}
+
 void renderer_task(void*)
 {
     ghost_debt debt = {};
@@ -717,9 +739,8 @@ void renderer_task(void*)
             const refresh_mode queued_mode = quality_pending
                                                  ? refresh_mode::quality
                                                  : next->mode;
-            const display_update_region queued_region = quality_pending
-                                                            ? display_update_region::full
-                                                            : next->update_region;
+            const display_update_region queued_region =
+                resolve_request_region(*next, latest, has_frame, quality_pending);
             for (std::size_t index = 0U; index < control_count; ++index) {
                 if (!control_replaced_by_frame(
                         controls[index], *next, queued_mode, queued_region)) {
@@ -754,7 +775,7 @@ void renderer_task(void*)
                 draw_full_view(*next, selected_light, pressed_light);
                 rect = {0, 0, UI_DISPLAY_WIDTH, UI_DISPLAY_HEIGHT};
             } else {
-                draw_partial_request(*next, rect);
+                draw_partial_request(*next, queued_region, rect);
             }
             const status_bar_view_state status = status_bar_get_state();
             if (!status_displayed || !status_states_equal(status, displayed_status) ||
@@ -961,7 +982,9 @@ bool ui_write_reader_frame(
     }
     if (reason != ui_update_reason::view_opened && request->mode != refresh_mode::quality) {
         request->mode = refresh_mode::text;
-        request->update_region = display_update_region::reader_content;
+        request->update_region = reason == ui_update_reason::popup_changed
+                                     ? display_update_region::reader_menu
+                                     : display_update_region::reader_content;
     }
     return submit_request(handle, *request);
 }

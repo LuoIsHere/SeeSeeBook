@@ -98,16 +98,44 @@ static_assert(FILE_ROW_COUNT == FILE_VIEW_ROW_COUNT);
 #define READER_MARGIN 24
 #define READER_TEXT_TOP 16
 #define READER_LINE_HEIGHT 30
-#define READER_NAVIGATION_HEIGHT (STATUS_BAR_HEIGHT * 2)
-#define READER_NAVIGATION_TOP (STATUS_BAR_TOP - READER_NAVIGATION_HEIGHT)
-#define READER_LINE_COUNT ((READER_NAVIGATION_TOP - READER_TEXT_TOP - 24) / READER_LINE_HEIGHT)
+#define READER_TEXT_BOTTOM (STATUS_BAR_TOP - READER_MARGIN)
+#define READER_TEXT_WIDTH (UI_DISPLAY_WIDTH - READER_MARGIN * 2)
+#define READER_TEXT_HEIGHT (READER_TEXT_BOTTOM - READER_TEXT_TOP)
+#define READER_LINE_COUNT (READER_TEXT_HEIGHT / READER_LINE_HEIGHT)
+#define READER_MENU_HEIGHT 80
+#define READER_MENU_ITEM_WIDTH 160
+#define READER_TAP_SLOP 20
 
 static_assert(READER_LINE_COUNT <= READER_PAGE_LINE_CAPACITY);
+static_assert(READER_TEXT_TOP + READER_LINE_COUNT * READER_LINE_HEIGHT <= READER_TEXT_BOTTOM);
 
-constexpr display_rect reader_button_rect(std::uint8_t index)
+constexpr display_rect reader_content_rect()
 {
-    return {static_cast<std::int16_t>(index * (UI_DISPLAY_WIDTH / 3)),
-            READER_NAVIGATION_TOP, UI_DISPLAY_WIDTH / 3, READER_NAVIGATION_HEIGHT};
+    return {0, 0, UI_DISPLAY_WIDTH, STATUS_BAR_TOP};
+}
+
+constexpr display_rect reader_text_rect()
+{
+    return {READER_MARGIN, READER_TEXT_TOP, READER_TEXT_WIDTH, READER_TEXT_HEIGHT};
+}
+
+constexpr display_rect reader_touch_zone_rect(std::uint8_t index)
+{
+    const auto left = UI_DISPLAY_WIDTH * index / 3;
+    const auto right = UI_DISPLAY_WIDTH * (index + 1) / 3;
+    return {static_cast<std::int16_t>(left), 0,
+            static_cast<std::int16_t>(right - left), STATUS_BAR_TOP};
+}
+
+constexpr display_rect reader_menu_rect()
+{
+    return {0, 0, UI_DISPLAY_WIDTH, READER_MENU_HEIGHT};
+}
+
+constexpr display_rect reader_menu_item_rect(std::uint8_t index)
+{
+    return {static_cast<std::int16_t>(index * READER_MENU_ITEM_WIDTH), 0,
+            READER_MENU_ITEM_WIDTH, READER_MENU_HEIGHT};
 }
 
 // Returns true when a normalized screen coordinate is inside a half-open rectangle.
@@ -198,7 +226,7 @@ constexpr display_rect app_back_button_rect(ui_view_id view)
         case ui_view_id::file:
             return file_back_button_rect();
         case ui_view_id::reader:
-            return reader_button_rect(0U);
+            return reader_menu_item_rect(0U);
         case ui_view_id::menu:
             return {0, 0, 0, 0};
     }

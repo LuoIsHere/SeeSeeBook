@@ -23,21 +23,23 @@ const char* status_text(reader_view_status status)
     return "";
 }
 
-void draw_page_button(display_surface& surface, bool next, bool enabled)
+void draw_menu(display_surface& surface)
 {
-    const auto rect = reader_button_rect(next ? 2U : 1U);
-    surface.draw_rect(rect, display_color::black);
-    surface.set_text_alignment(display_text_alignment::middle_center);
-    surface.set_text_size(3U);
-    surface.draw_text(enabled ? (next ? ">" : "<") : "-",
-                      rect.left + rect.width / 2, rect.top + rect.height / 2);
+    const auto rect = reader_menu_rect();
+    surface.fill_rect(rect, display_color::white);
+    surface.draw_horizontal_line(rect.left, rect.top + rect.height - 1,
+                                 rect.width, display_color::black);
+    const auto back = reader_menu_item_rect(0U);
+    surface.set_text_alignment(display_text_alignment::middle_left);
+    surface.set_text_size(APP_BACK_BUTTON_TEXT_SIZE);
+    surface.draw_text("Back", back.left + READER_MARGIN, back.top + back.height / 2);
 }
 
 }  // namespace
 
 void draw_reader_view(display_surface& surface, const reader_view_state& state)
 {
-    surface.fill_rect(0, 0, UI_DISPLAY_WIDTH, STATUS_BAR_TOP, display_color::white);
+    surface.fill_rect(reader_content_rect(), display_color::white);
     surface.set_text_color(display_color::black, display_color::white);
     surface.set_font(display_font::default_font);
     if (state.status == reader_view_status::ready) {
@@ -53,15 +55,15 @@ void draw_reader_view(display_surface& surface, const reader_view_state& state)
                 READER_TEXT_TOP + index * READER_LINE_HEIGHT + READER_LINE_HEIGHT / 2);
         }
     } else {
-        draw_centered_line(surface, status_text(state.status), READER_NAVIGATION_TOP / 2, 2U);
+        draw_centered_line(surface, status_text(state.status), STATUS_BAR_TOP / 2, 2U);
     }
     surface.set_font(display_font::default_font);
     if (!state.progress_persistent) {
-        draw_centered_line(surface, "Progress: RAM only", READER_NAVIGATION_TOP - 14, 1U);
+        draw_centered_line(surface, "Progress: RAM only", STATUS_BAR_TOP - 12, 1U);
     }
-    draw_back_button(surface, ui_view_id::reader, false);
-    draw_page_button(surface, false, state.previous_enabled);
-    draw_page_button(surface, true, state.next_enabled);
+    if (state.menu_visible) {
+        draw_menu(surface);
+    }
 }
 
 }  // namespace paper_mono_views

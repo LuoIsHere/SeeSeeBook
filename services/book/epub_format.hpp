@@ -15,7 +15,7 @@ constexpr std::size_t EPUB_PACKAGE_XML_LIMIT = 256U * 1024U;
 constexpr std::uint64_t EPUB_SPINE_ITEM_SIZE_LIMIT = 8U * 1024U * 1024U;
 constexpr std::uint64_t EPUB_CONTENT_SIZE_LIMIT = 64U * 1024U * 1024U;
 constexpr std::uint64_t EPUB_COVER_SIZE_LIMIT = 512U * 1024U;
-constexpr std::size_t EPUB_MANIFEST_ITEM_LIMIT = 128U;
+constexpr std::size_t EPUB_MANIFEST_ITEM_LIMIT = 512U;
 constexpr std::size_t EPUB_CACHE_METADATA_CAPACITY = 4096U;
 constexpr std::size_t EPUB_SPINE_MAP_HEADER_SIZE = 40U;
 

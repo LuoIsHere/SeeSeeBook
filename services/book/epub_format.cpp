@@ -359,21 +359,38 @@ bool epub_parse_package(const char* xml, std::size_t length,
 {
     output = {};
     if (xml == nullptr || package_path == nullptr || length == 0U || length > EPUB_PACKAGE_XML_LIMIT) { return false; }
-    struct manifest_item {
-        char id[97];
-        char path[EPUB_ARCHIVE_PATH_CAPACITY];
-        char media[65];
-        bool cover;
-        bool document;
-    };
     struct spine_ref { char id[97]; bool linear; };
-    auto manifest = epub_allocate_array<manifest_item>(EPUB_MANIFEST_ITEM_LIMIT);
-    auto spine = epub_allocate_array<spine_ref>(EPUB_SPINE_ITEM_LIMIT);
-    if (!manifest || !spine) { return false; }
-    std::size_t manifest_count = 0U;
+    std::size_t manifest_capacity = 0U;
+    std::size_t spine_capacity = 0U;
+    {
+        bool counting_manifest = false;
+        bool counting_spine = false;
+        std::size_t count_cursor = 0U;
+        std::string_view count_tag;
+        while (next_tag(xml, length, count_cursor, count_tag)) {
+            if (count_tag.size() >= 3U &&
+                (count_tag.substr(0U, 3U) == "!--" || count_tag[0] == '?' || count_tag[0] == '!')) {
+                continue;
+            }
+            bool closing = false;
+            const auto name = tag_name(count_tag, closing);
+            if (equal_folded(name, "manifest")) {
+                counting_manifest = !closing;
+            } else if (equal_folded(name, "spine")) {
+                counting_spine = !closing;
+            } else if (!closing && counting_manifest && equal_folded(name, "item")) {
+                if (++manifest_capacity > EPUB_MANIFEST_ITEM_LIMIT) { return false; }
+            } else if (!closing && counting_spine && equal_folded(name, "itemref")) {
+                if (++spine_capacity > EPUB_SPINE_ITEM_LIMIT) { return false; }
+            }
+        }
+    }
+    if (manifest_capacity == 0U || spine_capacity == 0U) { return false; }
+    auto spine = epub_allocate_array<spine_ref>(spine_capacity);
+    if (!spine) { return false; }
     std::size_t spine_count = 0U;
     char epub2_cover_id[97] = {};
-    bool in_manifest = false, in_spine = false, in_metadata = false, in_guide = false;
+    bool in_spine = false, in_metadata = false, in_guide = false;
     char guide_cover[EPUB_ARCHIVE_PATH_CAPACITY] = {};
     std::size_t cursor = 0U;
     std::string_view tag;
@@ -381,7 +398,6 @@ bool epub_parse_package(const char* xml, std::size_t length,
         if (tag.size() >= 3U && (tag.substr(0U, 3U) == "!--" || tag[0] == '?' || tag[0] == '!')) { continue; }
         bool closing = false;
         const auto name = tag_name(tag, closing);
-        if (equal_folded(name, "manifest")) { in_manifest = !closing; continue; }
         if (equal_folded(name, "spine")) { in_spine = !closing; continue; }
         if (equal_folded(name, "metadata")) { in_metadata = !closing; continue; }
         if (equal_folded(name, "guide")) { in_guide = !closing; continue; }
@@ -391,23 +407,8 @@ bool epub_parse_package(const char* xml, std::size_t length,
                 attribute(tag, "content", content)) {
                 copy_xml_value(content, epub2_cover_id, sizeof(epub2_cover_id));
             }
-        } else if (in_manifest && !closing && equal_folded(name, "item")) {
-            if (manifest_count >= EPUB_MANIFEST_ITEM_LIMIT) { return false; }
-            std::string_view id, href, media, properties;
-            if (!attribute(tag, "id", id) || !attribute(tag, "href", href) ||
-                !attribute(tag, "media-type", media)) { return false; }
-            manifest_item item = {};
-            char decoded[EPUB_ARCHIVE_PATH_CAPACITY] = {};
-            if (!copy_xml_value(id, item.id, sizeof(item.id)) ||
-                !copy_xml_value(href, decoded, sizeof(decoded)) ||
-                !copy_xml_value(media, item.media, sizeof(item.media)) ||
-                !epub_resolve_path(package_path, decoded, item.path, sizeof(item.path))) { return false; }
-            item.document = equal_folded(item.media, "application/xhtml+xml") ||
-                            equal_folded(item.media, "text/html");
-            item.cover = attribute(tag, "properties", properties) && token_contains(properties, "cover-image");
-            manifest[manifest_count++] = item;
         } else if (in_spine && !closing && equal_folded(name, "itemref")) {
-            if (spine_count >= EPUB_SPINE_ITEM_LIMIT) { return false; }
+            if (spine_count >= spine_capacity) { return false; }
             std::string_view idref, linear;
             if (!attribute(tag, "idref", idref)) { return false; }
             spine_ref value = {};
@@ -423,32 +424,64 @@ bool epub_parse_package(const char* xml, std::size_t length,
             }
         }
     }
-    if (manifest_count == 0U || spine_count == 0U) { return false; }
+    if (spine_count != spine_capacity) { return false; }
     output.spine = epub_allocate_array<epub_spine_item>(spine_count);
     if (!output.spine) { return false; }
-    for (std::size_t ref_index = 0U; ref_index < spine_count; ++ref_index) {
-        const auto& ref = spine[ref_index];
-        if (!ref.linear) { continue; }
-        const auto found = std::find_if(manifest.get(), manifest.get() + manifest_count,
-            [&ref](const manifest_item& item) { return std::strcmp(item.id, ref.id) == 0; });
-        if (found == manifest.get() + manifest_count || !found->document) { return false; }
-        epub_spine_item item = {};
-        std::strcpy(item.path, found->path);
-        output.spine[output.spine_count++] = item;
-    }
-    if (output.spine_count == 0U) { return false; }
-    for (std::size_t item_index = 0U; item_index < manifest_count; ++item_index) {
-        const auto& item = manifest[item_index];
-        if (!item.cover && (epub2_cover_id[0] == '\0' || std::strcmp(item.id, epub2_cover_id) != 0)) { continue; }
-        const auto encoding = cover_type(item.media, item.path);
-        if (encoding != book_cover_encoding::none) {
-            std::strcpy(output.cover_path, item.path);
+
+    std::size_t manifest_count = 0U;
+    bool in_manifest = false;
+    cursor = 0U;
+    while (next_tag(xml, length, cursor, tag)) {
+        if (tag.size() >= 3U && (tag.substr(0U, 3U) == "!--" || tag[0] == '?' || tag[0] == '!')) { continue; }
+        bool closing = false;
+        const auto name = tag_name(tag, closing);
+        if (equal_folded(name, "manifest")) { in_manifest = !closing; continue; }
+        if (!in_manifest || closing || !equal_folded(name, "item")) { continue; }
+        if (manifest_count++ >= manifest_capacity) { return false; }
+        std::string_view id_value, href_value, media_value, properties;
+        if (!attribute(tag, "id", id_value) || !attribute(tag, "href", href_value) ||
+            !attribute(tag, "media-type", media_value)) { return false; }
+        char id[97] = {};
+        char decoded[EPUB_ARCHIVE_PATH_CAPACITY] = {};
+        char path[EPUB_ARCHIVE_PATH_CAPACITY] = {};
+        char media[65] = {};
+        if (!copy_xml_value(id_value, id, sizeof(id)) ||
+            !copy_xml_value(href_value, decoded, sizeof(decoded)) ||
+            !copy_xml_value(media_value, media, sizeof(media)) ||
+            !epub_resolve_path(package_path, decoded, path, sizeof(path))) { return false; }
+        const bool document = equal_folded(media, "application/xhtml+xml") ||
+                              equal_folded(media, "text/html");
+        if (document) {
+            for (std::size_t ref_index = 0U; ref_index < spine_count; ++ref_index) {
+                if (spine[ref_index].linear && output.spine[ref_index].path[0] == '\0' &&
+                    std::strcmp(spine[ref_index].id, id) == 0) {
+                    std::strcpy(output.spine[ref_index].path, path);
+                }
+            }
+        }
+        const bool item_cover = attribute(tag, "properties", properties) &&
+                                token_contains(properties, "cover-image");
+        if (!item_cover && (epub2_cover_id[0] == '\0' || std::strcmp(id, epub2_cover_id) != 0)) {
+            continue;
+        }
+        const auto encoding = cover_type(media, path);
+        if (encoding != book_cover_encoding::none && output.cover_path[0] == '\0') {
+            std::strcpy(output.cover_path, path);
             output.cover_encoding = encoding;
-            break;
-        } else if (item.document && output.cover_document_path[0] == '\0') {
-            std::strcpy(output.cover_document_path, item.path);
+        } else if (document && output.cover_document_path[0] == '\0') {
+            std::strcpy(output.cover_document_path, path);
         }
     }
+    if (manifest_count != manifest_capacity) { return false; }
+    for (std::size_t ref_index = 0U; ref_index < spine_count; ++ref_index) {
+        if (!spine[ref_index].linear) { continue; }
+        if (output.spine[ref_index].path[0] == '\0') { return false; }
+        if (output.spine_count != ref_index) {
+            output.spine[output.spine_count] = output.spine[ref_index];
+        }
+        ++output.spine_count;
+    }
+    if (output.spine_count == 0U) { return false; }
     if (output.cover_path[0] == '\0' && output.cover_document_path[0] == '\0' && guide_cover[0] != '\0') {
         std::strcpy(output.cover_document_path, guide_cover);
     }

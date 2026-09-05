@@ -11,6 +11,6 @@ struct epub_position {
     std::uint64_t linear_offset;
 };
 
-constexpr std::uint16_t EPUB_SPINE_ITEM_LIMIT = 128U;
+constexpr std::uint16_t EPUB_SPINE_ITEM_LIMIT = 512U;
 
 book_file_format book_file_format_from_name(std::string_view name);

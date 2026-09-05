@@ -116,8 +116,8 @@ EPUB 没有新增 FreeRTOS task。原 BookIndex worker 扩展并命名为 `book_
 | EPUB 内部路径 | 256 字节加结尾空字符 |
 | `container.xml` | 64 KiB |
 | OPF | 256 KiB |
-| manifest item | 128 |
-| spine item | 128 |
+| manifest item | 512，逐项匹配，不保存完整 manifest 表 |
+| spine item | 512，按实际项数分配引用和路径表 |
 | 单个 spine XHTML 解压大小 | 8 MiB |
 | 派生连续正文 | 64 MiB |
 | XHTML/XML token | 256 字节 |
@@ -127,7 +127,7 @@ EPUB 没有新增 FreeRTOS task。原 BookIndex worker 扩展并命名为 `book_
 | 封面宽或高 | 4096 像素 |
 | BookService 内容结果池 | 2 槽 |
 
-ZIP entry 表、XML 缓冲、manifest/spine 表和 Deflate 字典使用显式定额分配；PaperMono 构建将这些解析期大对象放在 PSRAM。分配失败返回错误，不通过 C++ 容器扩容。整本派生正文和分页索引始终留在 SD 卡。
+ZIP entry 表、XML 缓冲、spine 引用/路径表和 Deflate 字典使用显式定额分配；PaperMono 构建将这些解析期大对象放在 PSRAM。OPF 经三次有界线性扫描完成计数、spine 引用收集和 manifest 匹配，不保存完整 manifest 表。分配失败返回错误，不通过 C++ 容器扩容。整本派生正文和分页索引始终留在 SD 卡。
 
 SD 状态由 `media_generation` 校验。拔卡或换卡后，worker 的后续读写失败；旧 session、旧 request、旧 generation 和已释放 handle 不会被 Reader 接受。
 

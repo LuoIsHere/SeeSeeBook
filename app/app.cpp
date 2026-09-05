@@ -126,15 +126,18 @@ void app_request_back()
     has_reader_launch = false;
 }
 
-bool app_request_open_reader(const char* path, std::uint32_t media_generation)
+bool app_request_open_reader(const char* path, std::uint32_t media_generation,
+                             book_file_format format)
 {
     if (path == nullptr || path[0] != '/' || has_pending_switch ||
-        foreground_kind == app_kind::reader || std::strlen(path) > STORAGE_MAX_PATH_LENGTH) {
+        foreground_kind == app_kind::reader || std::strlen(path) > STORAGE_MAX_PATH_LENGTH ||
+        (format != book_file_format::txt && format != book_file_format::epub)) {
         return false;
     }
     reader_launch = {};
     std::strcpy(reader_launch.file_path, path);
     reader_launch.media_generation = media_generation;
+    reader_launch.format = format;
     has_reader_launch = true;
     app_request_switch(app_kind::reader);
     return has_pending_switch;

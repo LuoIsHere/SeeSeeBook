@@ -83,6 +83,7 @@ void file_app::handle_app_event(const app_event& event)
         case app_event_type::rtc:
         case app_event_type::battery:
         case app_event_type::book:
+        case app_event_type::book_result:
             break;
     }
 }
@@ -257,7 +258,10 @@ void file_app::activate_row(std::uint8_t row_index)
         return;
     }
     const file_entry& entry = result->entries[entry_index];
-    if (entry.type == file_entry_type::file && !file_name_is_txt(entry.name)) {
+    const auto format = entry.type == file_entry_type::file
+                            ? file_name_book_format(entry.name)
+                            : book_file_format::unknown;
+    if (entry.type == file_entry_type::file && format == book_file_format::unknown) {
         popup_visible_ = true;
         popup_started_ms_ = system_tick_now_ms();
         submit_frame(ui_update_reason::popup_changed);
@@ -271,7 +275,7 @@ void file_app::activate_row(std::uint8_t row_index)
     if (child.size() > STORAGE_MAX_PATH_LENGTH) {
         status_ = file_view_status::path_too_long;
     } else if (entry.type == file_entry_type::file) {
-        if (app_request_open_reader(child.c_str(), requested_generation_)) {
+        if (app_request_open_reader(child.c_str(), requested_generation_, format)) {
             restore_page_index_ = page_index_;
             return_from_reader_ = true;
             return;

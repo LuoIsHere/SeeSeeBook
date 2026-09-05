@@ -5,6 +5,7 @@
 #include <esp_err.h>
 
 #include "app_event.hpp"
+#include "book_file_format.hpp"
 
 enum class app_kind : std::uint8_t {
     menu,
@@ -19,6 +20,7 @@ esp_err_t app_init();
 void app_update();
 void app_dispatch_event(const app_event& event);
 void app_request_switch(app_kind target);
-bool app_request_open_reader(const char* path, std::uint32_t media_generation);
+bool app_request_open_reader(const char* path, std::uint32_t media_generation,
+                             book_file_format format);
 void app_request_back();
 bool app_switch_pending();

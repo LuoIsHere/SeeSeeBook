@@ -21,7 +21,9 @@ class book_index_engine {
 public:
     explicit book_index_engine(const book_engine_io& io) : io_(io) {}
     void open(const char* path, const char* book_id, const text_layout_profile& layout,
-              std::uint32_t session, std::uint32_t generation);
+              std::uint32_t session, std::uint32_t generation,
+              const book_progress* fallback = nullptr, bool discard_cache = false);
+    void cancel();
     void query(std::uint32_t session, std::uint32_t request, bool by_page,
                std::uint32_t page, std::uint64_t offset);
     void save(std::uint32_t session, std::uint64_t offset);

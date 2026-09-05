@@ -3,6 +3,7 @@
 #include "app.hpp"
 #include "app_event.hpp"
 #include "battery_service.hpp"
+#include "book_service.hpp"
 #include "input_service.hpp"
 #include "rtc_service.hpp"
 #include "service_event_source.hpp"
@@ -70,6 +71,12 @@ bool collect_one_event(app_event& event)
         event.book = book;
         return true;
     }
+    book_result_event book_result = {};
+    if (book_service_try_get_result_event(book_result)) {
+        event.type = app_event_type::book_result;
+        event.book_result = book_result.handle;
+        return true;
+    }
     return false;
 }
 
@@ -90,6 +97,10 @@ void system_event_dispatcher_update()
         if (event.type == app_event_type::storage_result) {
             result_handle queue_owner = event.storage_result.handle;
             storage_service_release_result(queue_owner);
+        }
+        if (event.type == app_event_type::book_result) {
+            result_handle queue_owner = event.book_result;
+            book_service_release_result(queue_owner);
         }
         if (app_switch_pending()) {
             break;

@@ -99,7 +99,8 @@ bool book_index_engine::write_metadata()
 }
 
 void book_index_engine::open(const char* path, const char* book_id, const text_layout_profile& layout,
-                             std::uint32_t session, std::uint32_t generation)
+                             std::uint32_t session, std::uint32_t generation,
+                             const book_progress* fallback, bool discard_cache)
 {
     if (matches(path, generation) && working()) {
         session_ = session;
@@ -143,7 +144,7 @@ void book_index_engine::open(const char* path, const char* book_id, const text_l
     std::uint64_t size = 0U;
     std::int64_t mtime = 0;
     error = io_.read(io_.context, generation_, metadata_path_, 0U, json_, sizeof(json_), length, size, mtime);
-    const bool have_metadata = error == ESP_OK && length == size &&
+    const bool have_metadata = !discard_cache && error == ESP_OK && length == size &&
                               book_metadata_decode(json_, length, old);
     if (have_metadata && std::strcmp(old.canonical_path, metadata_.canonical_path) != 0) {
         // A hash directory alone never authorizes another canonical path.
@@ -168,6 +169,10 @@ void book_index_engine::open(const char* path, const char* book_id, const text_l
     // A pagination version change discards the old progress as well as the index.
     if (same_content && old.pagination_version == BOOK_PAGINATION_VERSION) {
         resume_ = old.progress;
+    } else if (fallback != nullptr &&
+               (fallback->byte_offset == 0U || fallback->byte_offset < metadata_.file.file_size)) {
+        resume_ = *fallback;
+        resume_.page = 0U;
     }
     position_ = resume_;
     metadata_.index_format_version = BOOK_PAGE_INDEX_FORMAT_VERSION;
@@ -181,6 +186,12 @@ void book_index_engine::open(const char* path, const char* book_id, const text_l
         if (!begin_rebuild(false)) { return; }
     }
     emit(book_event_type::opened, resume_);
+}
+
+void book_index_engine::cancel()
+{
+    phase_ = phase::idle;
+    persistent_ = metadata_dirty_ = false;
 }
 
 bool book_index_engine::begin_rebuild(bool calculate_fingerprint)

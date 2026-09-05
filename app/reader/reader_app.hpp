@@ -5,6 +5,7 @@
 #include "book_service.hpp"
 #include "storage_service.hpp"
 #include "ui_renderer.hpp"
+#include "reader_cover.hpp"
 
 class reader_app final : public app_base {
 public:
@@ -20,6 +21,7 @@ private:
     enum class page_operation : std::uint8_t { open, next, previous, rebuild_previous };
 
     char path_[STORAGE_MAX_PATH_LENGTH + 1U] = {};
+    book_file_format format_ = book_file_format::unknown;
     book_file_identity identity_ = {};
     reader_paginator paginator_;
     reader_page_history history_;
@@ -58,6 +60,11 @@ private:
     bool index_lookup_ = false;
     bool user_navigated_ = false;
     bool indexed_target_valid_ = false;
+    bool content_ready_ = false;
+    bool cover_available_ = false;
+    bool showing_cover_ = false;
+    bool cover_waiting_ = false;
+    bool cover_started_ = false;
     std::uint32_t current_page_ = 0U;
     std::uint32_t total_pages_ = 0U;
     std::uint32_t book_request_id_ = 0U;
@@ -65,16 +72,21 @@ private:
     std::uint32_t indexed_target_page_ = 0U;
     std::uint64_t indexed_target_offset_ = 0U;
     std::uint64_t queried_offset_ = 0U;
+    std::uint64_t cover_offset_ = 0U;
+    std::uint32_t cover_generation_ = 0U;
     page_operation indexed_operation_ = page_operation::open;
 
     void handle_action(const ui_action_event& action);
     void handle_result(const result_handle& handle);
+    void handle_book_result(const result_handle& handle);
     void handle_book_event(const book_service_event& event);
     bool query_index(bool by_page, std::uint32_t page = 0U);
     void update_status_page();
     bool check_media();
     void start_page(std::uint64_t offset, page_operation operation);
     void request_chunk();
+    bool request_cover();
+    void start_body(std::uint64_t offset, page_operation operation);
     void complete_page();
     void fail(reader_view_status status);
     void submit_frame(ui_update_reason reason);

@@ -239,6 +239,25 @@ std::int32_t display_surface::text_width(const char* text) const
     return frame_canvas.textWidth(text);
 }
 
+bool display_surface::draw_image(const std::uint8_t* data, std::size_t length,
+                                 book_cover_encoding encoding, const display_rect& rect)
+{
+    if (data == nullptr || length == 0U || length > UINT32_MAX || !valid_refresh_rect(rect)) {
+        return false;
+    }
+    if (encoding == book_cover_encoding::jpeg) {
+        return frame_canvas.drawJpg(data, static_cast<std::uint32_t>(length),
+            rect.left, rect.top, rect.width, rect.height, 0, 0, 0.0f, 0.0f,
+            datum_t::middle_center);
+    }
+    if (encoding == book_cover_encoding::png) {
+        return frame_canvas.drawPng(data, static_cast<std::uint32_t>(length),
+            rect.left, rect.top, rect.width, rect.height, 0, 0, 0.0f, 0.0f,
+            datum_t::middle_center);
+    }
+    return false;
+}
+
 bool hal_display_init()
 {
     if (display_initialized) {

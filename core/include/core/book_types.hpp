@@ -4,6 +4,8 @@
 #include <cstdint>
 #include <type_traits>
 
+#include "book_file_format.hpp"
+
 constexpr std::uint32_t BOOK_METADATA_SCHEMA_VERSION = 1U;
 constexpr std::uint32_t BOOK_PAGE_INDEX_FORMAT_VERSION = 1U;
 // Increment whenever font metrics, layout or the shared paginator changes.
@@ -29,6 +31,7 @@ struct book_progress {
 };
 
 enum class book_event_type : std::uint8_t { opened, ready, position, saved, error };
+enum class book_cover_encoding : std::uint8_t { none, jpeg, png };
 
 // Small value event: no index/page pointers cross tasks. Offsets remain on SD.
 struct book_service_event {
@@ -41,8 +44,11 @@ struct book_service_event {
     std::uint64_t file_size;
     std::int64_t modified_time;
     std::int32_t error;
+    book_file_format format;
     bool index_valid;
     bool persistent;
+    bool content_ready;
+    bool cover_available;
 };
 
 static_assert(std::is_trivially_copyable_v<book_service_event>);

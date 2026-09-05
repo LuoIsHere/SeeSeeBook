@@ -9,6 +9,9 @@ idf_component_register(
         "book/book_service.cpp"
         "book/book_format.cpp"
         "book/book_index_engine.cpp"
+        "book/epub_archive.cpp"
+        "book/epub_cache_engine.cpp"
+        "book/epub_format.cpp"
         "system_tick/system_tick_service.cpp"
     INCLUDE_DIRS "include/services"
     REQUIRES
@@ -18,4 +21,5 @@ idf_component_register(
     PRIV_REQUIRES
         json
         mbedtls
+        esp_rom
 )

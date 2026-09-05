@@ -1,7 +1,9 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 
+#include "book_types.hpp"
 #include "geometry.hpp"
 
 enum class refresh_mode : std::uint8_t {
@@ -88,6 +90,8 @@ public:
     void set_text_size(std::uint8_t size);
     void draw_text(const char* text, std::int16_t x, std::int16_t y);
     std::int32_t text_width(const char* text) const;
+    bool draw_image(const std::uint8_t* data, std::size_t length,
+                    book_cover_encoding encoding, const display_rect& rect);
 };
 
 // Initializes the active display backend.

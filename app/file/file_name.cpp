@@ -132,11 +132,10 @@ void format_file_name(
 
 bool file_name_is_txt(std::string_view name)
 {
-    if (name.size() < 5U) {
-        return false;
-    }
-    const auto suffix = name.substr(name.size() - 4U);
-    return suffix[0] == '.' && (suffix[1] == 't' || suffix[1] == 'T') &&
-           (suffix[2] == 'x' || suffix[2] == 'X') &&
-           (suffix[3] == 't' || suffix[3] == 'T');
+    return book_file_format_from_name(name) == book_file_format::txt;
+}
+
+book_file_format file_name_book_format(std::string_view name)
+{
+    return book_file_format_from_name(name);
 }

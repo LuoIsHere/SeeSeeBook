@@ -38,13 +38,19 @@ struct storage_result_event {
     result_handle handle;
 };
 
+struct book_result_event {
+    result_handle handle;
+};
+
 static_assert(std::is_trivially_copyable_v<rtc_service_event>);
 static_assert(std::is_trivially_copyable_v<battery_service_event>);
 static_assert(std::is_trivially_copyable_v<storage_status_event>);
 static_assert(std::is_trivially_copyable_v<storage_result_event>);
+static_assert(std::is_trivially_copyable_v<book_result_event>);
 
 bool rtc_service_try_get_event(rtc_service_event& event);
 bool battery_service_try_get_event(battery_service_event& event);
 bool storage_service_try_get_status_event(storage_status_event& event);
 bool storage_service_try_get_result_event(storage_result_event& event);
 bool book_service_try_get_event(book_service_event& event);
+bool book_service_try_get_result_event(book_result_event& event);

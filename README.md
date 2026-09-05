@@ -4,7 +4,7 @@
 
 ## Project Introduction
 
-SeeSeeBook is firmware for the M5Stack PaperMono (ESP32-S3), built with ESP-IDF and Mooncake. It provides touch-operated utilities on a monochrome e-paper display: menu navigation, screen and front-light controls, RTC settings, battery information, and SD card directory browsing.
+SeeSeeBook is firmware for the M5Stack PaperMono (ESP32-S3), built with ESP-IDF and Mooncake. It provides touch-operated utilities on a monochrome e-paper display: menu navigation, screen and front-light controls, RTC settings, battery information, SD card directory browsing, and TXT/EPUB reading.
 
 ## Project Status
 
@@ -18,12 +18,14 @@ Version v0.1 is in early development. Unstable behavior, bugs, and compatibility
 | TestApp | Screen Setting | Tests display content and touch coordinates/duration, including long presses; offers OFF, 25%, 50%, 75%, and 100% front-light presets. |
 | RTCSettingApp | RTC Setting | Reads and edits the local RTC date and time using a numeric keypad, with validation before saving. |
 | BatteryApp | Battery | Displays battery percentage, voltage, a current field, and charging status; samples every 5 seconds while open. |
-| FileApp | Files | Browses SD card directories and paginated file lists, with insertion/removal handling. |
+| FileApp | Files | Browses SD card directories and opens supported book files, with insertion/removal handling. |
+| ReaderApp | — | Reads UTF-8 TXT and DRM-free reflowable EPUB files with paging and SD-backed progress. |
 
 Tap a menu entry to open an App; use `< Back` to return. A shared bottom status bar shows `HH:MM`, battery percentage, and a lightning symbol when charging is confirmed. On PaperMono, the current reading is unavailable and appears as `--`; an unavailable charging state appears as `Unknown`. BatteryApp monitors information only and does not configure charging.
 
 - RTC Setting reads once when opened. Tap a date/time field, enter digits, and use the check mark to save; backspace clears the selected field, and Back cancels unsaved edits. Values use device-local time without timezone conversion.
-- Files uses a FAT32 SD card, without automatic formatting. Directories appear before files, sorted by name. Tap a directory to enter it, use `..` to go up (no action at `/`), and use the bottom arrows to change pages. Long filenames and Chinese filenames are supported; names occupy one line and overflow is replaced with `...`. Tapping a file displays a three-second notification instead of opening its contents. Reinsert the card after a mount error.
+- Files uses a FAT32 SD card, without automatic formatting. Directories appear before files, sorted by name. Tap a directory to enter it, use `..` to go up (no action at `/`), and use the bottom arrows to change pages. Long filenames and Chinese filenames are supported; names occupy one line and overflow is replaced with `...`. Tapping a `.txt` or `.epub` file opens Reader; other files display a three-second unsupported-file notification. Reinsert the card after a mount error.
+- Reader uses the left and right content areas for paging and the center area for its top menu. The menu return control is `<`. EPUB first opens on its cover when a usable cover exists and no saved position exists; saved books resume at the stored page. See [TXT reader internals](Docs/txt_reader.md) and [EPUB reader internals](Docs/epub_reader.md).
 
 ## Architecture
 
@@ -42,7 +44,7 @@ Apps --> View State --> UI Renderer (ui/) --> Display HAL
 ```
 
 - `app/` owns application logic and state, with Mooncake lifecycle integration.
-- `services/` provides RTC, battery, storage, input, and front-light capabilities; `system/` coordinates runtime updates, event dispatch, and shared status.
+- `services/` provides RTC, battery, storage, input, front-light, book indexing, and EPUB parsing/cache capabilities; `system/` coordinates runtime updates, event dispatch, and shared status.
 - `ui/include/ui/` defines View States and UI interfaces; `ui/paper_mono/` handles device-specific drawing and layout.
 - `m5_hal/include/hal/` defines hardware interfaces; `m5_hal/paper_mono/` implements PaperMono hardware access.
 - `main/` initializes and runs the system; `core/` holds shared contracts and [project information](core/include/core/project_info.hpp).

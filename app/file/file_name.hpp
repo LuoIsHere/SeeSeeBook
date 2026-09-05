@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <string_view>
 
+#include "book_file_format.hpp"
 #include "text_layout.hpp"
 
 // Produces the complete display name, including any ellipsis, in App-owned data.
@@ -11,3 +12,4 @@ void format_file_name(
     const text_layout_profile& layout);
 
 bool file_name_is_txt(std::string_view name);
+book_file_format file_name_book_format(std::string_view name);

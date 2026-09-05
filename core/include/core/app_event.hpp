@@ -17,6 +17,7 @@ enum class app_event_type : std::uint8_t {
     storage_status,
     storage_result,
     book,
+    book_result,
 };
 
 enum class app_rtc_operation : std::uint8_t {
@@ -53,6 +54,7 @@ struct app_event {
     app_storage_status_event storage_status;
     app_storage_result_event storage_result;
     book_service_event book;
+    result_handle book_result;
 };
 
 static_assert(std::is_trivially_copyable_v<app_rtc_event>);

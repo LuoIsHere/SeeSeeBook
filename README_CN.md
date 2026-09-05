@@ -4,7 +4,7 @@
 
 ## 项目介绍
 
-SeeSeeBook 是面向 M5Stack PaperMono（ESP32-S3）的固件，基于 ESP-IDF 和 Mooncake 开发。项目在单色墨水屏上提供触摸操作的实用功能，包括菜单导航、屏幕与前光控制、RTC 设置、电池信息和 SD 卡目录浏览。
+SeeSeeBook 是面向 M5Stack PaperMono（ESP32-S3）的固件，基于 ESP-IDF 和 Mooncake 开发。项目在单色墨水屏上提供触摸操作的实用功能，包括菜单导航、屏幕与前光控制、RTC 设置、电池信息、SD 卡目录浏览以及 TXT/EPUB 阅读。
 
 ## 项目状态
 
@@ -18,12 +18,14 @@ v0.1 仍处于早期开发阶段，可能存在不稳定行为、错误或兼容
 | TestApp | Screen Setting | 测试显示内容、触摸坐标和持续时间（含长按）；提供 OFF、25%、50%、75%、100% 五档前光调节。 |
 | RTCSettingApp | RTC Setting | 读取并使用数字键盘编辑本地 RTC 日期和时间，保存前进行校验。 |
 | BatteryApp | Battery | 显示电量百分比、电压、电流栏和充电状态；页面打开时每 5 秒采样一次。 |
-| FileApp | Files | 浏览 SD 卡目录和分页文件列表，处理插卡与拔卡状态。 |
+| FileApp | Files | 浏览 SD 卡目录和分页文件列表，打开支持的书籍文件，并处理插卡与拔卡状态。 |
+| ReaderApp | — | 阅读 UTF-8 TXT 和无 DRM 的流式排版 EPUB，提供翻页和 SD 卡进度保存。 |
 
 点击菜单入口打开 App，使用 `< Back` 返回。公共底部状态栏显示 `HH:MM`、电量百分比，并在确认充电时显示闪电符号。PaperMono 的电流读数不可用，以 `--` 显示；充电状态不可用时显示 `Unknown`。BatteryApp 仅监测信息，不配置充电参数。
 
 - RTC Setting 在进入时读取一次 RTC。点击日期或时间字段后输入数字，点击勾号保存；退格清空所选字段，Back 取消未保存的编辑。所有数值使用设备本地时间，不做时区转换。
-- Files 使用 FAT32 SD 卡，不自动格式化。目录优先于文件，按名称排序。点击目录进入，使用 `..` 返回上级（在 `/` 下无动作），使用底部箭头翻页。支持长文件名和中文文件名；名称单行显示，超出部分以 `...` 代替。点击文件会显示三秒提示，不打开文件内容。挂载出错后需拔出并重新插入 SD 卡。
+- Files 使用 FAT32 SD 卡，不自动格式化。目录优先于文件，按名称排序。点击目录进入，使用 `..` 返回上级（在 `/` 下无动作），使用底部箭头翻页。支持长文件名和中文文件名；名称单行显示，超出部分以 `...` 代替。点击 `.txt` 或 `.epub` 文件会进入 Reader，其他文件显示三秒的不支持提示。挂载出错后需拔出并重新插入 SD 卡。
+- Reader 的正文左区和右区用于翻页，中区用于打开顶部菜单；菜单返回控件显示为 `<`。EPUB 在没有保存位置且存在可用封面时先显示封面，已有进度时直接恢复保存页。实现细节见 [TXT 阅读器说明](Docs/txt_reader.md)和 [EPUB 阅读器说明](Docs/epub_reader.md)。
 
 ## 项目架构
 
@@ -42,7 +44,7 @@ App --> View State --> UI Renderer (ui/) --> Display HAL
 ```
 
 - `app/` 负责应用逻辑和状态，并接入 Mooncake 生命周期。
-- `services/` 提供 RTC、电池、存储、输入和前光能力；`system/` 统一协调运行时更新、事件分发和公共状态。
+- `services/` 提供 RTC、电池、存储、输入、前光、书籍索引和 EPUB 解析/缓存能力；`system/` 统一协调运行时更新、事件分发和公共状态。
 - `ui/include/ui/` 定义 View State 和 UI 接口；`ui/paper_mono/` 负责设备相关的绘制与布局。
 - `m5_hal/include/hal/` 定义硬件接口；`m5_hal/paper_mono/` 实现 PaperMono 硬件访问。
 - `main/` 初始化并运行系统；`core/` 保存公共数据契约和[项目关键信息](core/include/core/project_info.hpp)。

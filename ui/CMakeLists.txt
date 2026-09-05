@@ -2,6 +2,7 @@ idf_component_register(
     SRCS
         "paper_mono/ui_renderer.cpp"
         "paper_mono/ui_frame_pool.cpp"
+        "paper_mono/reader_cover.cpp"
         "paper_mono/text_layout.cpp"
         "paper_mono/views/reader_renderer.cpp"
         "paper_mono/views/battery_renderer.cpp"

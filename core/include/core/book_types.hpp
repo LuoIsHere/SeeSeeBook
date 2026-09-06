@@ -49,6 +49,7 @@ struct book_service_event {
     bool persistent;
     bool content_ready;
     bool cover_available;
+    bool resume_at_cover;
 };
 
 static_assert(std::is_trivially_copyable_v<book_service_event>);

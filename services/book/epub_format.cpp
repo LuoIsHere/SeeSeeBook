@@ -694,6 +694,7 @@ bool epub_cache_metadata_decode(const char* json, std::size_t length,
     const auto* algorithm = cJSON_GetObjectItemCaseSensitive(fingerprint, "algorithm");
     const auto* encoding = cJSON_GetObjectItemCaseSensitive(cache, "cover_encoding");
     const auto* complete = cJSON_GetObjectItemCaseSensitive(cache, "complete");
+    const auto* at_cover = cJSON_GetObjectItemCaseSensitive(progress, "at_cover");
     std::uint64_t schema = 0U, parser = 0U, pagination = 0U, mtime = 0U;
     std::uint64_t head = 0U, middle = 0U, tail = 0U, spine = 0U, progress_spine = 0U;
     epub_cache_metadata value = {};
@@ -715,6 +716,7 @@ bool epub_cache_metadata_decode(const char* json, std::size_t length,
         number(cache, "cover_size", EPUB_COVER_SIZE_LIMIT, value.cover_size) &&
         number(cache, "spine_count", EPUB_SPINE_ITEM_LIMIT, spine) &&
         cJSON_IsString(encoding) && encoding->valuestring != nullptr && cJSON_IsBool(complete) &&
+        cJSON_IsBool(at_cover) &&
         number(progress, "spine_index", EPUB_SPINE_ITEM_LIMIT - 1U, progress_spine) &&
         number(progress, "content_offset", EPUB_CONTENT_SIZE_LIMIT, value.progress.content_offset) &&
         number(progress, "linear_offset", EPUB_CONTENT_SIZE_LIMIT, value.progress.linear_offset);
@@ -726,6 +728,7 @@ bool epub_cache_metadata_decode(const char* json, std::size_t length,
         value.pagination_version = static_cast<std::uint32_t>(pagination);
         value.spine_count = static_cast<std::uint16_t>(spine);
         value.progress.spine_index = static_cast<std::uint16_t>(progress_spine);
+        value.progress_at_cover = cJSON_IsTrue(at_cover);
         value.complete = cJSON_IsTrue(complete);
         if (std::strcmp(encoding->valuestring, "none") == 0) { value.cover_encoding = book_cover_encoding::none; }
         else if (std::strcmp(encoding->valuestring, "jpeg") == 0) { value.cover_encoding = book_cover_encoding::jpeg; }
@@ -738,8 +741,10 @@ bool epub_cache_metadata_decode(const char* json, std::size_t length,
             value.spine_count != 0U && value.content_size != 0U &&
             value.progress.spine_index < value.spine_count &&
             value.progress.linear_offset < value.content_size &&
+            (!value.progress_at_cover || value.progress.linear_offset == 0U) &&
             ((value.cover_encoding == book_cover_encoding::none && value.cover_size == 0U) ||
-             (value.cover_encoding != book_cover_encoding::none && value.cover_size != 0U));
+             (value.cover_encoding != book_cover_encoding::none && value.cover_size != 0U)) &&
+            (!value.progress_at_cover || value.cover_encoding != book_cover_encoding::none);
     }
     cJSON_Delete(root);
     if (valid) { output = value; }
@@ -752,7 +757,9 @@ bool epub_cache_metadata_encode(const epub_cache_metadata& value,
     if (json == nullptr || capacity == 0U || capacity > EPUB_CACHE_METADATA_CAPACITY ||
         !value.complete || value.spine_count == 0U || value.spine_count > EPUB_SPINE_ITEM_LIMIT ||
         value.content_size == 0U || value.content_size > EPUB_CONTENT_SIZE_LIMIT ||
-        value.progress.spine_index >= value.spine_count || value.progress.linear_offset >= value.content_size) { return false; }
+        value.progress.spine_index >= value.spine_count || value.progress.linear_offset >= value.content_size ||
+        (value.progress_at_cover && (value.progress.linear_offset != 0U ||
+                                     value.cover_encoding == book_cover_encoding::none))) { return false; }
     cJSON* root = cJSON_CreateObject();
     auto* source = root == nullptr ? nullptr : cJSON_AddObjectToObject(root, "source");
     auto* fingerprint = source == nullptr ? nullptr : cJSON_AddObjectToObject(source, "fingerprint");
@@ -779,6 +786,7 @@ bool epub_cache_metadata_encode(const epub_cache_metadata& value,
         cJSON_AddNumberToObject(progress, "spine_index", value.progress.spine_index) &&
         cJSON_AddNumberToObject(progress, "content_offset", static_cast<double>(value.progress.content_offset)) &&
         cJSON_AddNumberToObject(progress, "linear_offset", static_cast<double>(value.progress.linear_offset)) &&
+        cJSON_AddBoolToObject(progress, "at_cover", value.progress_at_cover) &&
         cJSON_PrintPreallocated(root, json, static_cast<int>(capacity), true);
     cJSON_Delete(root);
     return valid;

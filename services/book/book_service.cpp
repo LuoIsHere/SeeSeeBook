@@ -36,6 +36,7 @@ struct command {
     book_file_format format;
     book_content_kind content_kind;
     bool by_page;
+    bool at_cover;
 };
 static_assert(std::is_trivially_copyable_v<command>);
 
@@ -129,6 +130,7 @@ void emit(void*, const book_service_event& source)
     event.content_ready = true;
     if (active_format.load() == book_file_format::epub && epub_index_started && epub_cache != nullptr) {
         event.cover_available = epub_cache->metadata().cover_encoding != book_cover_encoding::none;
+        event.resume_at_cover = epub_cache->metadata().progress_at_cover;
         event.persistent = event.persistent || epub_cache->ready();
     }
     publish_event(event);
@@ -293,7 +295,7 @@ void worker(void*)
                 if (active_format.load() == book_file_format::epub && epub_cache != nullptr &&
                     epub_cache->ready() &&
                     request.session == active_session) {
-                    const auto save_error = epub_cache->save(request.offset);
+                    const auto save_error = epub_cache->save(request.offset, request.at_cover);
                     if (save_error != ESP_OK) { emit_open_error(request, save_error); }
                 }
                 engine.save(request.session, request.offset);
@@ -389,13 +391,14 @@ bool book_service_query(std::uint32_t session, std::uint32_t media_generation,
 }
 
 bool book_service_close(std::uint32_t session, std::uint32_t media_generation,
-                        std::uint64_t offset)
+                        std::uint64_t offset, bool at_cover)
 {
     command request = {};
     request.type = operation::close;
     request.session = session;
     request.generation = media_generation;
     request.offset = offset;
+    request.at_cover = at_cover;
     request.format = active_format.load();
     return submit(request);
 }

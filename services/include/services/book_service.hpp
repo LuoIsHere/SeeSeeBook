@@ -32,7 +32,8 @@ bool book_service_open(const char* path, const text_layout_profile& layout,
                        book_file_format format);
 bool book_service_query(std::uint32_t session, std::uint32_t media_generation,
                         std::uint32_t request, bool by_page, std::uint32_t page, std::uint64_t offset);
-bool book_service_close(std::uint32_t session, std::uint32_t media_generation, std::uint64_t offset);
+bool book_service_close(std::uint32_t session, std::uint32_t media_generation,
+                        std::uint64_t offset, bool at_cover);
 bool book_service_read(std::uint32_t session, std::uint32_t media_generation,
                        std::uint32_t request, book_content_kind kind,
                        std::uint64_t offset);

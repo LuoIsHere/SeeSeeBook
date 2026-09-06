@@ -7,7 +7,7 @@
 #include "book_format.hpp"
 #include "epub_memory.hpp"
 
-constexpr std::uint32_t EPUB_CACHE_SCHEMA_VERSION = 1U;
+constexpr std::uint32_t EPUB_CACHE_SCHEMA_VERSION = 2U;
 constexpr std::uint32_t EPUB_PARSER_VERSION = 1U;
 constexpr std::size_t EPUB_ARCHIVE_PATH_CAPACITY = 257U;
 constexpr std::size_t EPUB_CONTAINER_XML_LIMIT = 64U * 1024U;
@@ -39,6 +39,7 @@ struct epub_cache_metadata {
     std::uint16_t spine_count;
     book_cover_encoding cover_encoding;
     epub_position progress;
+    bool progress_at_cover;
     std::uint32_t parser_version;
     std::uint32_t pagination_version;
     bool complete;

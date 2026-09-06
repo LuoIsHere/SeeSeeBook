@@ -80,7 +80,7 @@ void reader_app::on_close()
     waiting_ = busy_ = frame_pending_ = false;
     ui_reader_cover_clear();
     if (position_valid_ && book_submitted_ &&
-        !book_service_close(session_id_, media_generation_, current_offset_)) {
+        !book_service_close(session_id_, media_generation_, current_offset_, showing_cover_)) {
         ESP_LOGW(log_tag, "SD progress save not queued");
     }
     ++session_id_;
@@ -208,9 +208,25 @@ void reader_app::handle_action(const ui_action_event& action)
         }
         start_page(next_offset_, page_operation::next);
     } else if (action.control == ui_control_type::reader_previous_zone && current_offset_ == 0U &&
-               format_ == book_file_format::epub && cover_available_ && cover_generation_ != 0U) {
-        showing_cover_ = true;
-        submit_frame(ui_update_reason::content_changed);
+               format_ == book_file_format::epub && cover_available_) {
+        user_navigated_ = true;
+        if (cover_generation_ != 0U) {
+            showing_cover_ = true;
+            update_status_page();
+            submit_frame(ui_update_reason::content_changed);
+        } else {
+            cover_offset_ = 0U;
+            cover_started_ = false;
+            cover_waiting_ = busy_ = true;
+            status_ = reader_view_status::loading;
+            loading_shown_ = false;
+            loading_started_ms_ = system_tick_now_ms();
+            update_status_page();
+            if (!request_cover()) {
+                cover_waiting_ = cover_available_ = false;
+                start_body(0U, page_operation::open);
+            }
+        }
     } else if (action.control == ui_control_type::reader_previous_zone && current_offset_ > 0U) {
         user_navigated_ = true;
         if (index_valid_ && index_position_valid_ && !book_waiting_ && current_page_ > 0U) {
@@ -365,6 +381,7 @@ void reader_app::handle_book_result(const result_handle& handle)
                 start_body(0U, page_operation::open);
             } else {
                 status_ = reader_view_status::ready;
+                update_status_page();
                 submit_frame(ui_update_reason::content_changed);
             }
         }
@@ -467,7 +484,7 @@ bool reader_app::write_frame(reader_view_state& view, const void* context)
 void reader_app::update_status_page()
 {
     const bool valid = active_ && index_valid_ && index_position_valid_ && position_valid_ &&
-        current_page_ < total_pages_ &&
+        !showing_cover_ && current_page_ < total_pages_ &&
         (status_ == reader_view_status::ready || status_ == reader_view_status::empty_file);
     if (ui_status_bar_update_reader_page(valid, valid ? current_page_ + 1U : 0U, valid ? total_pages_ : 0U)) {
         ui_renderer_notify_status_bar();
@@ -536,11 +553,8 @@ void reader_app::handle_book_event(const book_service_event& event)
             metadata_known_ = true;
         }
         cover_available_ = event.cover_available;
-        if (!user_navigated_ && event.progress.byte_offset > 0U && event.progress.byte_offset < event.file_size) {
-            history_.clear();
-            start_body(event.progress.byte_offset, page_operation::open);
-        } else if (format_ == book_file_format::epub && !user_navigated_ &&
-                   event.progress.byte_offset == 0U && cover_available_) {
+        if (format_ == book_file_format::epub && !user_navigated_ &&
+            event.resume_at_cover && cover_available_) {
             cover_offset_ = 0U;
             cover_started_ = false;
             cover_waiting_ = busy_ = true;
@@ -550,6 +564,9 @@ void reader_app::handle_book_event(const book_service_event& event)
                 cover_waiting_ = cover_available_ = false;
                 start_body(0U, page_operation::open);
             }
+        } else if (!user_navigated_ && event.progress.byte_offset > 0U && event.progress.byte_offset < event.file_size) {
+            history_.clear();
+            start_body(event.progress.byte_offset, page_operation::open);
         } else if (format_ == book_file_format::epub && !position_valid_ && !busy_) {
             start_body(event.progress.byte_offset, page_operation::open);
         }

@@ -41,7 +41,7 @@ FileApp
 | Service | `epub_format` | 解析 container/OPF、规范化内部路径、提取封面引用、把 XHTML 转为 UTF-8 文本、编解码 EPUB metadata 和 spine map。 |
 | Service | `epub_cache_engine` | 协调解析状态机和 SD 派生文件，校验源文件及缓存，保存 EPUB 位置。 |
 | UI | `reader_cover`、`reader_renderer` | 在 PSRAM 中管理有代次和引用计数的压缩封面，校验图片头，并绘制封面、正文和顶部菜单。 |
-| HAL | Storage / Display | 按偏移读写普通文件；使用 M5GFX 将 JPEG/PNG 按比例居中绘入一位画布。HAL 不解析 EPUB。 |
+| HAL | Storage / Display | 按偏移读写普通文件；使用 M5GFX 将 JPEG/PNG 解码到八位灰度临时画布，再转换到一位显示画布。HAL 不解析 EPUB。 |
 
 TXT 的正文仍由 StorageService 按块读取。EPUB 的 ZIP、package、XHTML 和 SD 派生缓存位于独立模块；两种格式共享 ReaderApp 的交互状态、TextPaginator、页面数据、BookIndex 基础机制、UI frame 和 Renderer。
 
@@ -80,7 +80,7 @@ Book ID 是规范化完整路径的 SHA-256，因此不同目录中的同名书�
 
 初次解析先写 `.tmp` 文件，正文、spine map 和封面完成后依次替换目标文件，`epub_metadata.json` 最后替换。没有完整 metadata 的临时产物不会被复用。原 EPUB 不会整体装入 RAM，也不会整体解包到目录；SD 上只保存连续正文、位置映射、压缩封面和索引等阅读所需派生数据。
 
-每次打开都会核对规范化路径、文件大小、mtime 和头部/中部/尾部各 4 KiB 的 CRC32 指纹，并验证 parser/pagination 版本、派生文件大小、spine map 头及 CRC。mtime 变化但指纹相同会更新 metadata 并复用缓存；指纹、文件大小或版本不匹配会重新解析。重新解析时 EPUB 进度置为第一页，共享分页索引也从零重建，不读取旧页码或旧偏移。
+每次打开都会核对规范化路径、文件大小、mtime 和头部/中部/尾部各 4 KiB 的 CRC32 指纹，并验证 parser/pagination 版本、派生文件大小、spine map 头及 CRC。mtime 变化但指纹相同会更新 metadata 并复用缓存；指纹、文件大小、缓存 schema 或 parser 版本不匹配会重新解析。当前 EPUB 缓存 schema 为 2；旧 schema 的派生正文、封面、位置和索引均不复用。重新解析后从第 0 页封面开始；没有可用封面时从正文第 1 页开始，共享分页索引从零重建。
 
 ## 阅读进度和索引
 
@@ -90,17 +90,18 @@ Book ID 是规范化完整路径的 SHA-256，因此不同目录中的同名书�
 spine_index
 content_offset
 linear_offset
+at_cover
 ```
 
-`linear_offset` 是派生连续正文中的页首偏移；保存时通过 `epub_spine.map` 转换为 `spine_index + content_offset`，读取缓存时重新计算并核对三者一致性。Reader 正常关闭时将已完成页面的页首提交给 BookService。`pagination_version` 不一致时进度归零并重建分页索引。
+`linear_offset` 是派生连续正文中的页首偏移；保存时通过 `epub_spine.map` 转换为 `spine_index + content_offset`，读取缓存时重新计算并核对三者一致性。`at_cover` 区分第 0 页封面和正文第 1 页，因为两者对应的正文偏移都可能为 0。Reader 正常关闭时将已完成页面的页首及封面状态提交给 BookService。`pagination_version` 不一致时进度归零并重建分页索引，有可用封面时同时将位置重置到第 0 页。
 
-共享 `book_index_engine` 在 `epub_content.txt` 上生成 `pages.idx`，使页号查询、跨章节上一页和总页数沿用 TXT 的实现。第一页没有保存位置时，Reader 在可用封面存在的情况下先显示封面；点击右侧进入正文第一页。保存位置大于零时直接读取该位置，不重复显示封面。
+共享 `book_index_engine` 在 `epub_content.txt` 上生成 `pages.idx`，使正文页号查询、跨章节上一页和总页数沿用 TXT 的实现。封面是逻辑第 0 页，不计入正文总页数，也不显示状态栏页码；点击右侧进入正文第 1 页。从中间正文恢复时不预读封面，连续向前翻到正文第 1 页后再次向前，Reader 按需从 SD 读取封面并显示第 0 页。关闭时分别保存“封面”或正文页首，因此重新打开正文第 1 页时不会再被误判为封面。
 
 ## 封面
 
 EPUB3 封面来自 manifest 的 `properties="cover-image"`。EPUB2 支持 metadata 中的 `meta name="cover"`，也支持 cover XHTML 或 guide 引用中的 `img` / SVG `image` 链接。实际图片仅接受 JPEG 和 PNG。
 
-压缩封面先流式复制到 SD 的 `epub_cover.bin`，显示时再由 BookService 以 2048 字节块传递。Reader cover store 在 PaperMono 配置中只从 PSRAM 分配，最多保留两个带引用计数的压缩数据槽，每个封面上限 512 KiB；退出 Reader 时释放。PNG 必须具有有效 IHDR，JPEG 必须在前 64 KiB 内出现 SOF；宽、高各不超过 4096。M5GFX 按内容区等比例缩小并居中绘制到一位画布，不覆盖公共状态栏。
+压缩封面先流式复制到 SD 的 `epub_cover.bin`，显示时再由 BookService 以 2048 字节块传递。Reader cover store 在 PaperMono 配置中只从 PSRAM 分配，最多保留两个带引用计数的压缩数据槽，每个封面上限 512 KiB；退出 Reader 时释放。PNG 必须具有有效 IHDR，JPEG 必须在前 64 KiB 内出现 SOF；宽、高各不超过 4096。M5GFX 先将图片按内容区比例居中解码到 PSRAM 中的八位灰度临时画布，再用固定 4×4 Bayer 阈值转换为一位黑白帧，不覆盖公共状态栏。当前 SSD1677 后端使用单色 OTP 刷新序列。
 
 封面 entry 的解压、CRC、SD 写入、头部校验或图片解码失败时，Reader 保持正文可读：解析阶段丢弃封面，显示阶段无法使用封面时进入正文或显示封面占位内容，右侧仍可进入正文。
 
@@ -124,6 +125,7 @@ EPUB 没有新增 FreeRTOS task。原 BookIndex worker 扩展并命名为 `book_
 | ZIP / BookService 数据块 | 2048 字节 |
 | Deflate 字典 | 32 KiB |
 | 压缩封面 | 512 KiB |
+| 封面灰度临时画布 | 内容区大小，当前为 480 × 760 字节 |
 | 封面宽或高 | 4096 像素 |
 | BookService 内容结果池 | 2 槽 |
 

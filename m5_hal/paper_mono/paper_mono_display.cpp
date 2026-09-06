@@ -42,6 +42,59 @@ bool valid_refresh_rect(const display_rect& rect)
            rect.top + rect.height <= PAPER_MONO_DISPLAY_HEIGHT;
 }
 
+std::uint8_t cover_dither_threshold(std::uint16_t x, std::uint16_t y)
+{
+    // A centered 4x4 Bayer matrix keeps solid black text and solid white
+    // margins while representing intermediate luminance with bounded,
+    // deterministic one-bit patterns.
+    static constexpr std::uint8_t thresholds[4][4] = {
+        {8U, 136U, 40U, 168U},
+        {200U, 72U, 232U, 104U},
+        {56U, 184U, 24U, 152U},
+        {248U, 120U, 216U, 88U},
+    };
+    return thresholds[y & 3U][x & 3U];
+}
+
+bool draw_monochrome_image(const std::uint8_t* data, std::size_t length,
+                           book_cover_encoding encoding, const display_rect& rect)
+{
+    M5Canvas grayscale_canvas;
+    grayscale_canvas.setPsram(true);
+    grayscale_canvas.setColorDepth(lgfx::color_depth_t::grayscale_8bit);
+    if (grayscale_canvas.createSprite(rect.width, rect.height) == nullptr) {
+        ESP_LOGW(log_tag, "allocate grayscale cover canvas failed bytes=%lu",
+                 static_cast<unsigned long>(std::size_t(rect.width) * rect.height));
+        return false;
+    }
+    grayscale_canvas.fillScreen(TFT_WHITE);
+    const bool decoded = encoding == book_cover_encoding::jpeg
+        ? grayscale_canvas.drawJpg(data, static_cast<std::uint32_t>(length),
+            0, 0, rect.width, rect.height, 0, 0, 0.0f, 0.0f,
+            datum_t::middle_center)
+        : encoding == book_cover_encoding::png
+        ? grayscale_canvas.drawPng(data, static_cast<std::uint32_t>(length),
+            0, 0, rect.width, rect.height, 0, 0, 0.0f, 0.0f,
+            datum_t::middle_center)
+        : false;
+    const std::size_t expected = std::size_t(rect.width) * rect.height;
+    if (!decoded || grayscale_canvas.bufferLength() != expected) {
+        return false;
+    }
+    const auto* grayscale = static_cast<const std::uint8_t*>(grayscale_canvas.getBuffer());
+    frame_canvas.startWrite();
+    for (std::uint16_t y = 0U; y < static_cast<std::uint16_t>(rect.height); ++y) {
+        for (std::uint16_t x = 0U; x < static_cast<std::uint16_t>(rect.width); ++x) {
+            const bool white = grayscale[std::size_t(y) * rect.width + x] >=
+                               cover_dither_threshold(x, y);
+            frame_canvas.writePixel(rect.left + x, rect.top + y,
+                                    white ? TFT_WHITE : TFT_BLACK);
+        }
+    }
+    frame_canvas.endWrite();
+    return true;
+}
+
 paper_mono::otp_refresh_rect native_refresh_rect(const display_rect& rect)
 {
     std::uint16_t native_left = 0U;
@@ -245,17 +298,7 @@ bool display_surface::draw_image(const std::uint8_t* data, std::size_t length,
     if (data == nullptr || length == 0U || length > UINT32_MAX || !valid_refresh_rect(rect)) {
         return false;
     }
-    if (encoding == book_cover_encoding::jpeg) {
-        return frame_canvas.drawJpg(data, static_cast<std::uint32_t>(length),
-            rect.left, rect.top, rect.width, rect.height, 0, 0, 0.0f, 0.0f,
-            datum_t::middle_center);
-    }
-    if (encoding == book_cover_encoding::png) {
-        return frame_canvas.drawPng(data, static_cast<std::uint32_t>(length),
-            rect.left, rect.top, rect.width, rect.height, 0, 0, 0.0f, 0.0f,
-            datum_t::middle_center);
-    }
-    return false;
+    return draw_monochrome_image(data, length, encoding, rect);
 }
 
 bool hal_display_init()

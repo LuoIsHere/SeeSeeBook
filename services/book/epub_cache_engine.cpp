@@ -122,6 +122,7 @@ bool epub_cache_engine::validate_cached(const char* path)
     if (metadata_.pagination_version != BOOK_PAGINATION_VERSION) {
         metadata_.pagination_version = BOOK_PAGINATION_VERSION;
         metadata_.progress = {0U, 0U, 0U};
+        metadata_.progress_at_cover = metadata_.cover_encoding != book_cover_encoding::none;
         rebuilt_ = true;
         dirty = true;
     }
@@ -339,6 +340,7 @@ esp_err_t epub_cache_engine::finalize()
     metadata_.cover_encoding = package_.cover_encoding;
     metadata_.spine_count = starts_count_;
     metadata_.progress = {0U, 0U, 0U};
+    metadata_.progress_at_cover = package_.cover_encoding != book_cover_encoding::none;
     if (!write_metadata()) { return ESP_FAIL; }
     archive_.close(); package_ = {}; phase_ = phase::ready; return ESP_OK;
 }
@@ -372,11 +374,15 @@ esp_err_t epub_cache_engine::step()
     return error;
 }
 
-esp_err_t epub_cache_engine::save(std::uint64_t linear_offset)
+esp_err_t epub_cache_engine::save(std::uint64_t linear_offset, bool at_cover)
 {
     if (!ready() || linear_offset >= metadata_.content_size || starts_count_ != metadata_.spine_count) {
         return ESP_ERR_INVALID_ARG;
     }
+    if (at_cover && (linear_offset != 0U || metadata_.cover_encoding == book_cover_encoding::none)) {
+        return ESP_ERR_INVALID_ARG;
+    }
     metadata_.progress = epub_position_from_linear(starts_, starts_count_, linear_offset);
+    metadata_.progress_at_cover = at_cover;
     return write_metadata() ? ESP_OK : ESP_FAIL;
 }

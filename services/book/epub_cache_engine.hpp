@@ -20,7 +20,7 @@ public:
     const char* content_path() const { return content_path_; }
     const char* cover_path() const { return cover_path_; }
     const epub_cache_metadata& metadata() const { return metadata_; }
-    esp_err_t save(std::uint64_t linear_offset);
+    esp_err_t save(std::uint64_t linear_offset, bool at_cover);
 
 private:
     enum class phase : std::uint8_t { idle, cover, spine, finalize, ready, failed };

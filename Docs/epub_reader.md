@@ -1,90 +1,92 @@
-# EPUB 阅读器工作方式
+# How the EPUB Reader Works
 
-本文说明源码中 EPUB 阅读链路的实际实现。Reader 支持扩展名不区分大小写的 `.epub` 文件，并将其作为无 DRM、可流式排版的 EPUB2 或 EPUB3 处理。
+This document describes the EPUB reading path implemented in the source. Reader recognizes `.epub` without regard to case and handles it as an unencrypted, reflowable EPUB2 or EPUB3 publication.
 
-## 打开与数据流
+## Opening and data flow
 
-1. `FileApp` 使用 `book_file_format_from_name()` 识别 `.txt` 和 `.epub`。它只建立完整逻辑路径，将路径、`media_generation` 和格式写入 `app_launch_context`，再请求打开 `ReaderApp`。
-2. `ReaderApp::on_open()` 建立新的 `session_id`，取得共享文字布局，并向 `BookService` 提交 EPUB 打开命令。ReaderApp 不读取 ZIP、XML 或 FATFS。
-3. BookService 的 `book_worker` 打开 ZIP，解析 `META-INF/container.xml` 中的 OPF 路径，解析 OPF 的 manifest、spine 和封面项，然后按 spine 顺序处理 XHTML。
-4. XHTML 经流式过滤器转换为连续 UTF-8 文本。转换结果、spine 映射和封面以派生文件形式写入 SD 卡，完整 metadata 最后原子替换。
-5. 派生正文准备完成后，现有 `book_index_engine` 对它建立分页索引。ReaderApp 仍使用共享 `reader_paginator` 生成当前页，UI 仍接收同一个 `reader_view_state` 和 `reader_page`。
-6. ReaderApp 通过 BookService 的 2048 字节结果块读取派生正文或封面。队列只传递 `result_handle`；ReaderApp 在事件回调期间同步消费结果，并校验 `session_id`、`request_id`、`media_generation` 和偏移。
+1. `FileApp` uses `book_file_format_from_name()` to recognize `.txt` and `.epub`. It builds the full logical path, calls `reader_make_launch_context()` with the path, `media_generation`, and format, then passes that generic context to `app_request_launch()`.
+2. App Runtime retains the bounded context until the deferred switch and calls the target application's `prepare_launch()`. `ReaderApp` validates and copies its own typed payload. `ReaderApp::on_open()` then creates a new `session_id`, obtains the shared text layout, and submits an EPUB open command to `BookService`. ReaderApp does not read ZIP, XML, or FATFS directly.
+3. The BookService `book_worker` opens the ZIP, finds the OPF path through `META-INF/container.xml`, parses the OPF manifest, spine, and cover item, and processes XHTML in spine order.
+4. A streaming XHTML filter converts the documents into continuous UTF-8 text. Derived text, spine mapping, and the compressed cover are stored on the SD card. Complete metadata is replaced last.
+5. After derived text is ready, the existing `book_index_engine` builds its pagination index. ReaderApp uses the shared `reader_paginator` for the current page, and the UI receives the same `reader_view_state` and `reader_page` used for TXT.
+6. ReaderApp reads derived text or cover data through BookService in 2048-byte result blocks. Queues carry only `result_handle`; Reader consumes a resolved result synchronously in its event callback and verifies `session_id`, `request_id`, `media_generation`, and offset.
 
-完整正文调用链为：
+The body path is:
 
 ```text
 FileApp
-  → app_request_open_reader
-  → app_launch_context
+  → reader_make_launch_context
+  → app_request_launch
+  → generic app_launch_context
   → ReaderApp
   → BookService / book_worker
   → epub_zip_archive
   → container.xml / OPF / manifest / spine
   → epub_xhtml_filter
-  → SD 派生正文
+  → derived text on SD
   → book_index_engine + reader_paginator
   → reader_page
   → UI frame pool
   → PaperMono renderer
 ```
 
-## 模块边界
+## Module boundaries
 
-| 层级 | 模块 | 职责 |
+| Layer | Module | Responsibility |
 | --- | --- | --- |
-| Core | `book_file_format`、`book_types`、`text_paginator` | 定义书籍格式、跨层小型事件、EPUB 位置和值类型，并提供 TXT/EPUB 共用分页。 |
-| App | `FileApp` | 识别文件格式，传递路径、卡代次和格式。 |
-| App | `ReaderApp` | 管理加载、封面、正文、翻页、菜单、错误和异步结果生命周期。 |
-| Service | `book_service` | 串行执行解析、缓存、分页索引和内容块读取；发布小型事件及结果句柄。 |
-| Service | `epub_archive` | 校验 ZIP32 目录和本地头，查找 entry，并流式处理 Stored 或 Deflate 数据及 CRC。 |
-| Service | `epub_format` | 解析 container/OPF、规范化内部路径、提取封面引用、把 XHTML 转为 UTF-8 文本、编解码 EPUB metadata 和 spine map。 |
-| Service | `epub_cache_engine` | 协调解析状态机和 SD 派生文件，校验源文件及缓存，保存 EPUB 位置。 |
-| UI | `reader_cover`、`reader_renderer` | 在 PSRAM 中管理有代次和引用计数的压缩封面，校验图片头，并绘制封面、正文和顶部菜单。 |
-| HAL | Storage / Display | 按偏移读写普通文件；使用 M5GFX 将 JPEG/PNG 解码到八位灰度临时画布，再转换到一位显示画布。HAL 不解析 EPUB。 |
+| Core | `book_file_format`, `book_types`, `text_paginator` | Defines book formats, small cross-layer events, EPUB position/value types, and shared TXT/EPUB pagination. |
+| App | `FileApp` | Identifies the file format and constructs Reader's typed launch payload. |
+| App | App Runtime | Owns generic launch bytes for one deferred switch and manages switching, return history, and Mooncake lifecycle without Reader-specific fields or branches. |
+| App | `ReaderApp` | Groups session, page, content-request, book/index, cover, navigation, and presentation state; manages loading, paging, errors, and asynchronous result lifetimes. |
+| Service | `book_service` | Serializes parsing, caching, page indexing, and block reads and publishes small events and result handles. |
+| Service | `epub_archive` | Validates ZIP32 directories and local headers, finds entries, and streams Stored or Deflate data while checking CRC. |
+| Service | `epub_format` | Parses container and OPF files, normalizes internal paths, finds cover references, converts XHTML to UTF-8 text, and encodes or decodes EPUB metadata and the spine map. |
+| Service | `epub_cache_engine` | Coordinates the parser state machine and SD-derived files, validates source and cache data, and stores EPUB positions. |
+| UI | `reader_cover`, `reader_renderer` | Keeps generation-tagged, reference-counted compressed covers in PSRAM, validates image headers, and renders the cover, body, and top menu. |
+| HAL | Storage / Display | Reads and writes ordinary files by offset. M5GFX decodes JPEG or PNG into an eight-bit grayscale temporary canvas and converts it to the one-bit display canvas. The HAL does not parse EPUB. |
 
-TXT 的正文仍由 StorageService 按块读取。EPUB 的 ZIP、package、XHTML 和 SD 派生缓存位于独立模块；两种格式共享 ReaderApp 的交互状态、TextPaginator、页面数据、BookIndex 基础机制、UI frame 和 Renderer。
+TXT body blocks still come directly from StorageService. EPUB ZIP, package, XHTML, and derived-cache code are separate modules. Both formats share ReaderApp interaction state, TextPaginator, page values, BookIndex mechanisms, UI frames, and the Renderer.
 
-## ZIP、package 与路径
+## ZIP, package, and path handling
 
-ZIP 读取使用中央目录定位 entry，并在提取时再次核对本地文件头、文件名、方法、标志、大小和 CRC。支持 Stored 和原始 Deflate；Deflate 使用 ESP-IDF `esp_rom` 中 Apache-2.0 许可的 miniz `tinfl`，采用 32 KiB 字典和 2048 字节输入/交付块。加密 entry、多磁盘 ZIP、ZIP64 尺寸和其他压缩方法会被拒绝。
+ZIP access locates entries through the central directory and rechecks the local header, name, compression method, flags, sizes, and CRC during extraction. Stored and raw Deflate are supported. Deflate uses the Apache-2.0-licensed miniz `tinfl` in ESP-IDF `esp_rom`, with a 32 KiB dictionary and 2048-byte input and delivery blocks. Encrypted entries, multi-disk ZIP, ZIP64 sizes, and other methods are rejected.
 
-`container.xml` 提供 OPF rootfile。OPF parser 读取 manifest 和线性 spine，支持默认命名空间或带前缀的名称。内部引用先移除 query/fragment、解码百分号序列，再以引用文件所在目录为基准处理 `./`、`../` 和重复 `/`；越过归档根、反斜线、控制字符、绝对路径和外部 URI 会被拒绝。
+`container.xml` supplies the OPF rootfile. The OPF parser accepts default or prefixed namespace names and reads the manifest and linear spine. An internal reference has its query and fragment removed and percent escapes decoded. It is then resolved against the containing file's directory while handling `./`, `../`, and repeated `/`. Paths that escape the archive root, contain backslashes or control characters, are absolute, or name external URIs are rejected.
 
-## XHTML 转换
+## XHTML conversion
 
-每个 spine entry 解压后直接送入流式 XHTML 过滤器，不把整章放入 RAM。过滤器：
+Each spine entry streams directly from decompression into the XHTML filter, so a complete chapter is not held in RAM. The filter:
 
-- 保留 `body`、`span`、`strong`、`em` 等元素中的文字；
-- 在 `p`、`div`、`h1` 至 `h6`、`li`、`blockquote`、`section` 和 `article` 的结束位置插入换行；
-- 将 `br` 转为换行并归一化普通空白；
-- 忽略标签、XML declaration、注释以及 `script`、`style` 内容；
-- 解码 `amp`、`lt`、`gt`、`quot`、`apos`、`nbsp`、`ndash`、`mdash`、`hellip` 和十进制/十六进制数字实体；
-- 对跨块 UTF-8 序列继续使用项目的 UTF-8 解码规则，非法序列使正文解析失败。
+- preserves text in elements such as `body`, `span`, `strong`, and `em`;
+- inserts a newline after `p`, `div`, `h1` through `h6`, `li`, `blockquote`, `section`, and `article`;
+- turns `br` into a newline and normalizes ordinary whitespace;
+- ignores markup, XML declarations, comments, and `script` or `style` contents;
+- decodes `amp`, `lt`, `gt`, `quot`, `apos`, `nbsp`, `ndash`, `mdash`, `hellip`, and decimal or hexadecimal numeric entities;
+- carries UTF-8 sequences across blocks using the project's decoder and fails body parsing on an invalid sequence.
 
-各 spine 的文本依次写入同一个 `epub_content.txt`。章节起点另存于 `epub_spine.map`，因此正文翻页是连续的，章节边界不改变 Reader 的上一页和下一页行为。
+Spine text is appended to one `epub_content.txt`. Chapter starts are stored separately in `epub_spine.map`, so paging remains continuous and chapter boundaries do not change Reader previous/next behavior.
 
-## SD 派生文件与缓存复用
+## SD-derived files and cache reuse
 
-Book ID 是规范化完整路径的 SHA-256，因此不同目录中的同名书籍使用不同目录。EPUB 文件保存在：
+The Book ID is the SHA-256 of the normalized complete path, so equal names in different directories use different cache directories. EPUB files are stored as:
 
 ```text
 /.system/books/<book_id>/
   epub_metadata.json
   epub_content.txt
   epub_spine.map
-  epub_cover.bin        # 存在可用封面时
-  metadata.json         # 共享分页索引 metadata
-  pages.idx             # 共享分页索引
+  epub_cover.bin        # when a usable cover exists
+  metadata.json         # shared page-index metadata
+  pages.idx             # shared page index
 ```
 
-初次解析先写 `.tmp` 文件，正文、spine map 和封面完成后依次替换目标文件，`epub_metadata.json` 最后替换。没有完整 metadata 的临时产物不会被复用。原 EPUB 不会整体装入 RAM，也不会整体解包到目录；SD 上只保存连续正文、位置映射、压缩封面和索引等阅读所需派生数据。
+Initial parsing writes `.tmp` files. Derived body text, the spine map, and the cover replace their targets before `epub_metadata.json` is replaced last. Temporary output without complete metadata is never reused. The source EPUB is neither loaded wholly into RAM nor unpacked as a complete directory; the SD card keeps only derived data needed for reading.
 
-每次打开都会核对规范化路径、文件大小、mtime 和头部/中部/尾部各 4 KiB 的 CRC32 指纹，并验证 parser/pagination 版本、派生文件大小、spine map 头及 CRC。mtime 变化但指纹相同会更新 metadata 并复用缓存；指纹、文件大小、缓存 schema 或 parser 版本不匹配会重新解析。当前 EPUB 缓存 schema 为 2；旧 schema 的派生正文、封面、位置和索引均不复用。重新解析后从第 0 页封面开始；没有可用封面时从正文第 1 页开始，共享分页索引从零重建。
+Every open checks the normalized path, source size, mtime, three 4 KiB CRC32 fingerprints at the head, middle, and tail, parser and pagination versions, derived file sizes, and the spine-map header and CRC. A changed mtime with matching fingerprints updates metadata and reuses the cache. A fingerprint, size, schema, or parser-version mismatch reparses the source. EPUB cache schema is `2`; older derived body, cover, position, and index data are not reused. Reparse starts from logical page 0 when a usable cover exists, or body page 1 otherwise, and rebuilds the shared page index from the beginning.
 
-## 阅读进度和索引
+## Reading progress and indexes
 
-`epub_metadata.json` 的进度包含：
+Progress in `epub_metadata.json` contains:
 
 ```text
 spine_index
@@ -93,52 +95,54 @@ linear_offset
 at_cover
 ```
 
-`linear_offset` 是派生连续正文中的页首偏移；保存时通过 `epub_spine.map` 转换为 `spine_index + content_offset`，读取缓存时重新计算并核对三者一致性。`at_cover` 区分第 0 页封面和正文第 1 页，因为两者对应的正文偏移都可能为 0。Reader 正常关闭时将已完成页面的页首及封面状态提交给 BookService。`pagination_version` 不一致时进度归零并重建分页索引，有可用封面时同时将位置重置到第 0 页。
+`linear_offset` is a page-start position in the derived continuous body. Saving maps it through `epub_spine.map` to `spine_index + content_offset`; loading recomputes and checks that all three agree. `at_cover` distinguishes logical page 0 from body page 1 because both may correspond to body offset 0. On a normal close, Reader submits the completed page start and cover state to BookService. A `pagination_version` mismatch resets progress and rebuilds the page index, with the position set to page 0 when a cover is available.
 
-共享 `book_index_engine` 在 `epub_content.txt` 上生成 `pages.idx`，使正文页号查询、跨章节上一页和总页数沿用 TXT 的实现。封面是逻辑第 0 页，不计入正文总页数，也不显示状态栏页码；点击右侧进入正文第 1 页。从中间正文恢复时不预读封面，连续向前翻到正文第 1 页后再次向前，Reader 按需从 SD 读取封面并显示第 0 页。关闭时分别保存“封面”或正文页首，因此重新打开正文第 1 页时不会再被误判为封面。
+The shared `book_index_engine` creates `pages.idx` over `epub_content.txt`, so body page-number lookup, cross-chapter previous navigation, and total page count use the TXT mechanism. The cover is logical page 0, is excluded from the body total, and hides the status-bar page number. The right zone enters body page 1. Restoring a later body page does not preload the cover. After navigating backward to body page 1, one more previous action reads the cover from the SD card on demand and shows page 0. Closing records cover and body-page-1 positions separately, so reopening body page 1 does not mistake it for the cover.
 
-## 封面
+## Cover handling
 
-EPUB3 封面来自 manifest 的 `properties="cover-image"`。EPUB2 支持 metadata 中的 `meta name="cover"`，也支持 cover XHTML 或 guide 引用中的 `img` / SVG `image` 链接。实际图片仅接受 JPEG 和 PNG。
+An EPUB3 cover comes from a manifest item with `properties="cover-image"`. EPUB2 also accepts `meta name="cover"` and image references from cover XHTML or a guide entry. The resolved image must be JPEG or PNG.
 
-压缩封面先流式复制到 SD 的 `epub_cover.bin`，显示时再由 BookService 以 2048 字节块传递。Reader cover store 在 PaperMono 配置中只从 PSRAM 分配，最多保留两个带引用计数的压缩数据槽，每个封面上限 512 KiB；退出 Reader 时释放。PNG 必须具有有效 IHDR，JPEG 必须在前 64 KiB 内出现 SOF；宽、高各不超过 4096。M5GFX 先将图片按内容区比例居中解码到 PSRAM 中的八位灰度临时画布，再用固定 4×4 Bayer 阈值转换为一位黑白帧，不覆盖公共状态栏。当前 SSD1677 后端使用单色 OTP 刷新序列。
+The compressed cover is streamed first to `epub_cover.bin` on the SD card and later returned by BookService in 2048-byte blocks. In the PaperMono configuration, the Reader cover store allocates only from PSRAM and retains at most two generation-tagged, reference-counted compressed slots. Each cover is limited to 512 KiB and is released when Reader closes. PNG requires a valid IHDR. JPEG must have an SOF marker within the first 64 KiB. Width and height are each limited to 4096 pixels.
 
-封面 entry 的解压、CRC、SD 写入、头部校验或图片解码失败时，Reader 保持正文可读：解析阶段丢弃封面，显示阶段无法使用封面时进入正文或显示封面占位内容，右侧仍可进入正文。
+M5GFX centers and scales the image to the content region in an eight-bit grayscale PSRAM canvas, then converts it to the one-bit display canvas with a fixed 4×4 Bayer threshold. It does not cover the shared status bar. The current SSD1677 backend uses a monochrome OTP refresh sequence, so gray values are represented by spatial dithering rather than native gray levels.
 
-## 任务、内存和生命周期
+If cover-entry decompression, CRC, SD writing, header validation, or image decoding fails, the body remains readable. Parsing discards an unusable cover; a display-time failure enters the body or shows the cover fallback, and the right zone still opens the body.
 
-EPUB 没有新增 FreeRTOS task。原 BookIndex worker 扩展并命名为 `book_worker`，stack 为 12288 字节、priority 为 2，串行处理 BookService 命令、EPUB 状态机和分页索引。每个循环只执行一个有界步骤并 `vTaskDelay(1)`，Mooncake 的 `on_open()`、`on_running()` 和事件回调不做 ZIP/XML/XHTML 扫描或图片解码。封面解码发生在 UI renderer task。
+## Tasks, memory, and lifecycle
 
-固定或明确受限的容量如下：
+EPUB adds no FreeRTOS task. The BookIndex worker is extended and named `book_worker`; it has a 12288-byte stack and priority `2`. It serially processes BookService commands, the EPUB state machine, and page indexing. Each loop executes one bounded step and calls `vTaskDelay(1)`. Mooncake `on_open()`, `on_running()`, and event callbacks do not scan ZIP, XML, or XHTML and do not decode images. Cover decoding runs in the UI renderer task.
 
-| 项目 | 上限 |
+Fixed or explicitly bounded capacities are:
+
+| Item | Limit |
 | --- | ---: |
-| ZIP entry | 512 |
-| EPUB 内部路径 | 256 字节加结尾空字符 |
+| ZIP entries | 512 |
+| EPUB internal path | 256 bytes plus null terminator |
 | `container.xml` | 64 KiB |
 | OPF | 256 KiB |
-| manifest item | 512，逐项匹配，不保存完整 manifest 表 |
-| spine item | 512，按实际项数分配引用和路径表 |
-| 单个 spine XHTML 解压大小 | 8 MiB |
-| 派生连续正文 | 64 MiB |
-| XHTML/XML token | 256 字节 |
-| ZIP / BookService 数据块 | 2048 字节 |
-| Deflate 字典 | 32 KiB |
-| 压缩封面 | 512 KiB |
-| 封面灰度临时画布 | 内容区大小，当前为 480 × 760 字节 |
-| 封面宽或高 | 4096 像素 |
-| BookService 内容结果池 | 2 槽 |
+| Manifest items | 512, matched incrementally without retaining the full manifest table |
+| Spine items | 512, with reference and path tables allocated for the actual count |
+| One decompressed spine XHTML | 8 MiB |
+| Derived continuous body | 64 MiB |
+| XHTML/XML token | 256 bytes |
+| ZIP / BookService data block | 2048 bytes |
+| Deflate dictionary | 32 KiB |
+| Compressed cover | 512 KiB |
+| Cover grayscale canvas | Content-region size, currently 480 × 760 bytes |
+| Cover width or height | 4096 pixels |
+| BookService content result pool | 2 slots |
 
-ZIP entry 表、XML 缓冲、spine 引用/路径表和 Deflate 字典使用显式定额分配；PaperMono 构建将这些解析期大对象放在 PSRAM。OPF 经三次有界线性扫描完成计数、spine 引用收集和 manifest 匹配，不保存完整 manifest 表。分配失败返回错误，不通过 C++ 容器扩容。整本派生正文和分页索引始终留在 SD 卡。
+The ZIP entry table, XML buffers, spine-reference and path tables, and Deflate dictionary use explicit bounded allocations. PaperMono builds allocate these larger parser objects from PSRAM. The OPF is scanned three bounded times to count items, collect spine references, and match manifest items without retaining a full manifest table. Allocation failure returns an error instead of growing C++ containers. The complete derived body and page index remain on the SD card.
 
-SD 状态由 `media_generation` 校验。拔卡或换卡后，worker 的后续读写失败；旧 session、旧 request、旧 generation 和已释放 handle 不会被 Reader 接受。
+Reader checks SD state through `media_generation`. After removal or replacement, later worker I/O fails; Reader rejects an old session, request, generation, or released handle. `reader_runtime_state` is value-reset on open and close, while `session_serial_` continues across resets so a late result cannot join a later session.
 
-## 支持边界
+## Supported scope
 
-当前处理 EPUB2/EPUB3 中无 DRM、可流式排版、ZIP32、Stored/Deflate、线性 spine、UTF-8 XHTML 纯文字以及 JPEG/PNG 封面。
+The implemented model accepts unencrypted reflowable EPUB2/EPUB3 publications using ZIP32, Stored or Deflate entries, a linear spine, UTF-8 XHTML text, and JPEG or PNG covers.
 
-以下内容不进入当前阅读模型：目录 UI、章节选择、搜索、书签、批注、字体/字号/行距设置、CSS 布局、正文图片、表格、正文 SVG、音视频、JavaScript、DRM、加密 entry、Fixed Layout、Media Overlay、外部链接、网络资源和 OPDS。非线性 spine item 会跳过。字体未覆盖的码点继续使用现有字形回退。
+The reading model does not include a table-of-contents UI, chapter selection, search, named bookmarks, annotations, font or spacing controls, CSS layout, body images, tables, body SVG, audio, video, JavaScript, DRM, encrypted entries, fixed layout, media overlays, external links, network resources, or OPDS. Nonlinear spine items are skipped. Code points outside the active font continue to use the existing glyph fallback.
 
-已知兼容性边界包括 ZIP64、多磁盘 ZIP、非 Stored/Deflate 压缩、超过上述容量的 package/entry/path、SOF 位于 JPEG 前 64 KiB 之后，以及依赖 CSS 或浏览器布局才能表达正文结构的 EPUB。源文件指纹抽样检查头部、中部和尾部各 4 KiB；当文件大小和 mtime 同时保持不变时，完全位于三个抽样区之外的内容变化不会触发缓存重建。解析错误显示为无效 EPUB 或不支持格式；SD I/O 和卡代次错误显示存储错误。
+Compatibility boundaries include ZIP64, multi-disk ZIP, methods other than Stored or Deflate, packages, entries, or paths over the listed capacities, JPEG SOF beyond the first 64 KiB, and documents that require CSS or browser layout to preserve their body structure. Source fingerprinting samples only 4 KiB at the head, middle, and tail. A content change outside all samples is not detected when size and mtime also remain unchanged. Parser errors appear as invalid EPUB or unsupported format; SD I/O and media-generation failures appear as storage errors.
 
-源码入口：[文件识别](../core/book_file_format.cpp)、[ReaderApp](../app/reader/reader_app.cpp)、[BookService](../services/book/book_service.cpp)、[ZIP](../services/book/epub_archive.cpp)、[package/XHTML/metadata](../services/book/epub_format.cpp)、[SD 缓存](../services/book/epub_cache_engine.cpp)、[封面存储](../ui/paper_mono/reader_cover.cpp)、[Reader renderer](../ui/paper_mono/views/reader_renderer.cpp)。
+Source entry points: [file recognition](../core/book_file_format.cpp), [generic App Runtime](../app/app.cpp), [Reader launch data](../app/reader/reader_launch.hpp), [ReaderApp](../app/reader/reader_app.cpp), [BookService](../services/book/book_service.cpp), [ZIP](../services/book/epub_archive.cpp), [package/XHTML/metadata](../services/book/epub_format.cpp), [SD cache](../services/book/epub_cache_engine.cpp), [cover store](../ui/paper_mono/reader_cover.cpp), and [Reader renderer](../ui/paper_mono/views/reader_renderer.cpp).

@@ -10,7 +10,7 @@ public:
     virtual void handle_app_event(const app_event& event) = 0;
     // Called synchronously before Mooncake opens the target. A target must copy
     // anything it needs; the runtime clears its launch context after this call.
-    virtual bool prepare_launch(const app_launch_context&) { return false; }
+    virtual bool prepare_launch(const app_launch_context& context) { return !context.has_value(); }
 
     void set_app_name(const char* name)
     {

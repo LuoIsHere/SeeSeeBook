@@ -8,6 +8,7 @@
 
 #include "app.hpp"
 #include "file_name.hpp"
+#include "reader_launch.hpp"
 #include "system_tick_service.hpp"
 #include "text_layout_provider.hpp"
 
@@ -275,7 +276,9 @@ void file_app::activate_row(std::uint8_t row_index)
     if (child.size() > STORAGE_MAX_PATH_LENGTH) {
         status_ = file_view_status::path_too_long;
     } else if (entry.type == file_entry_type::file) {
-        if (app_request_open_reader(child.c_str(), requested_generation_, format)) {
+        app_launch_context launch = {};
+        if (reader_make_launch_context(launch, child.c_str(), requested_generation_, format) &&
+            app_request_launch(app_kind::reader, launch)) {
             restore_page_index_ = page_index_;
             return_from_reader_ = true;
             return;

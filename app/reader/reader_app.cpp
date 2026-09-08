@@ -16,91 +16,73 @@ constexpr std::uint32_t loading_delay_ms = 400U;
 
 bool reader_app::prepare_launch(const app_launch_context& context)
 {
-    if (active_ || context.file_path[0] != '/' ||
-        std::memchr(context.file_path, '\0', sizeof(context.file_path)) == nullptr ||
-        (context.format != book_file_format::txt && context.format != book_file_format::epub)) {
+    reader_launch_parameters parameters = {};
+    if (state_.session.active || !reader_read_launch_context(context, parameters)) {
         return false;
     }
-    std::strcpy(path_, context.file_path);
-    media_generation_ = context.media_generation;
-    format_ = context.format;
-    prepared_ = true;
+    std::strcpy(state_.session.path, parameters.file_path);
+    state_.session.media_generation = parameters.media_generation;
+    state_.session.format = parameters.format;
+    state_.session.prepared = true;
     return true;
 }
 
 void reader_app::on_open()
 {
-    ++session_id_;
-    active_ = true;
-    menu_visible_ = false;
+    const session_state prepared_session = state_.session;
+    state_ = {};
+    state_.session = prepared_session;
+    state_.session.id = ++session_serial_;
+    state_.session.active = true;
+    state_.session.media_valid = true;
+    state_.book.content_ready = state_.session.format == book_file_format::txt;
     view_ = {};
-    media_valid_ = true;
-    metadata_known_ = false;
-    position_valid_ = false;
-    waiting_ = false;
-    busy_ = false;
-    frame_pending_ = false;
-    book_opened_ = book_submitted_ = progress_persistent_ = false;
-    index_valid_ = index_position_valid_ = book_waiting_ = index_lookup_ = false;
-    user_navigated_ = indexed_target_valid_ = false;
-    content_ready_ = format_ == book_file_format::txt;
-    cover_available_ = showing_cover_ = cover_waiting_ = cover_started_ = false;
-    cover_generation_ = 0U;
-    cover_offset_ = 0U;
     ui_reader_cover_clear();
-    current_page_ = total_pages_ = 0U;
-    identity_ = {};
-    current_offset_ = next_offset_ = 0U;
-    end_of_file_ = false;
     history_.clear();
     layout_ = ui_reader_text_layout();
-    status_ = reader_view_status::loading;
-    if (!prepared_) {
-        status_ = reader_view_status::file_not_found;
+    if (!state_.session.prepared) {
+        state_.page.status = reader_view_status::file_not_found;
     } else if (storage_service_get_state() != storage_state::ready ||
-               storage_service_get_media_generation() != media_generation_) {
-        media_valid_ = false;
-        status_ = storage_service_get_state() == storage_state::no_card
+               storage_service_get_media_generation() != state_.session.media_generation) {
+        state_.session.media_valid = false;
+        state_.page.status = storage_service_get_state() == storage_state::no_card
                       ? reader_view_status::no_card : reader_view_status::storage_error;
     } else {
-        if (format_ == book_file_format::txt) { start_page(0U, page_operation::open); }
-        book_submitted_ = book_service_open(path_, layout_, session_id_, media_generation_, format_);
-        if (!book_submitted_) { ESP_LOGW(log_tag, "book open not queued; reading without SD progress"); }
+        if (state_.session.format == book_file_format::txt) { start_page(0U, page_operation::open); }
+        state_.book.submitted = book_service_open(state_.session.path, layout_, state_.session.id,
+                                                  state_.session.media_generation,
+                                                  state_.session.format);
+        if (!state_.book.submitted) { ESP_LOGW(log_tag, "book open not queued; reading without SD progress"); }
     }
-    prepared_ = false;
-    loading_shown_ = true;
+    state_.content_request.loading_shown = true;
     submit_frame(ui_update_reason::view_opened);
     update_status_page();
 }
 
 void reader_app::on_close()
 {
-    active_ = false;
-    menu_visible_ = false;
-    waiting_ = busy_ = frame_pending_ = false;
+    state_.session.active = false;
     ui_reader_cover_clear();
-    if (position_valid_ && book_submitted_ &&
-        !book_service_close(session_id_, media_generation_, current_offset_, showing_cover_)) {
+    if (state_.page.position_valid && state_.book.submitted &&
+        !book_service_close(state_.session.id, state_.session.media_generation, state_.page.current_offset, state_.cover.showing)) {
         ESP_LOGW(log_tag, "SD progress save not queued");
     }
-    ++session_id_;
-    book_waiting_ = index_lookup_ = index_valid_ = index_position_valid_ = false;
-    update_status_page();
-    path_[0] = '\0';
-    format_ = book_file_format::unknown;
+    ++session_serial_;
+    state_ = {};
+    view_ = {};
     history_.clear();
-    prepared_ = false;
+    update_status_page();
 }
 
 bool reader_app::check_media()
 {
-    if (!media_valid_) {
+    if (!state_.session.media_valid) {
         return false;
     }
     const auto state = storage_service_get_state();
-    if (storage_service_get_media_generation() != media_generation_ ||
+    if (storage_service_get_media_generation() != state_.session.media_generation ||
         state != storage_state::ready) {
-        media_valid_ = false;
+        state_.session.media_valid = false;
         fail(state == storage_state::no_card ? reader_view_status::no_card
                                             : reader_view_status::storage_error);
         return false;
@@ -110,46 +92,49 @@ bool reader_app::check_media()
 
 void reader_app::on_running()
 {
-    if (!active_) {
+    if (!state_.session.active) {
         return;
     }
     check_media();
     const auto now = system_tick_now_ms();
-    if (book_waiting_ && now - book_request_started_ms_ >= request_timeout_ms) {
-        book_waiting_ = false;
-        index_valid_ = index_position_valid_ = false;
-        if (index_lookup_) { index_lookup_ = false; fail(reader_view_status::storage_error); }
+    if (state_.book.waiting && now - state_.book.request_started_ms >= request_timeout_ms) {
+        state_.book.waiting = false;
+        state_.book.index_valid = state_.book.index_position_valid = false;
+        if (state_.book.index_lookup) { state_.book.index_lookup = false; fail(reader_view_status::storage_error); }
         update_status_page();
     }
-    if (busy_ && !index_lookup_) {
+    if (state_.content_request.busy && !state_.book.index_lookup) {
         const auto now = system_tick_now_ms();
-        if (waiting_ && now - request_started_ms_ >= request_timeout_ms) {
+        if (state_.content_request.waiting && now - state_.content_request.started_ms >= request_timeout_ms) {
             fail(reader_view_status::storage_error);
-        } else if (!waiting_) {
-            if (cover_waiting_) { request_cover(); }
+        } else if (!state_.content_request.waiting) {
+            if (state_.cover.waiting) { request_cover(); }
             else { request_chunk(); }
         }
-        if (busy_ && !loading_shown_ && now - loading_started_ms_ >= loading_delay_ms) {
-            loading_shown_ = true;
+        if (state_.content_request.busy && !state_.content_request.loading_shown &&
+            now - state_.content_request.loading_started_ms >= loading_delay_ms) {
+            state_.content_request.loading_shown = true;
             submit_frame(ui_update_reason::content_changed);
         }
     }
-    if (frame_pending_) {
-        frame_pending_ = !ui_write_reader_frame(pending_reason_, write_frame, this);
+    if (state_.presentation.frame_pending) {
+        state_.presentation.frame_pending = !ui_write_reader_frame(state_.presentation.pending_reason, write_frame, this);
     }
-    if (index_lookup_ && !loading_shown_ && now - loading_started_ms_ >= loading_delay_ms) {
-        loading_shown_ = true;
+    if (state_.book.index_lookup && !state_.content_request.loading_shown &&
+        now - state_.content_request.loading_started_ms >= loading_delay_ms) {
+        state_.content_request.loading_shown = true;
         submit_frame(ui_update_reason::content_changed);
     }
-    if (index_valid_ && !index_position_valid_ && !busy_ && !book_waiting_ && position_valid_ &&
-        (status_ == reader_view_status::ready || status_ == reader_view_status::empty_file)) {
+    if (state_.book.index_valid && !state_.book.index_position_valid &&
+        !state_.content_request.busy && !state_.book.waiting && state_.page.position_valid &&
+        (state_.page.status == reader_view_status::ready || state_.page.status == reader_view_status::empty_file)) {
         query_index(false);
     }
 }
 
 void reader_app::handle_app_event(const app_event& event)
 {
-    if (!active_) {
+    if (!state_.session.active) {
         return;
     }
     switch (event.type) {
@@ -181,63 +166,65 @@ void reader_app::handle_action(const ui_action_event& action)
         return;
     }
     if (action.control == ui_control_type::navigate_back) {
-        if (menu_visible_) { app_request_back(); }
+        if (state_.navigation.menu_visible) { app_request_back(); }
         return;
     }
     if (action.control == ui_control_type::reader_menu_zone) {
-        menu_visible_ = !menu_visible_;
+        state_.navigation.menu_visible = !state_.navigation.menu_visible;
         submit_frame(ui_update_reason::popup_changed);
         return;
     }
-    if (menu_visible_ || busy_ || status_ != reader_view_status::ready || !check_media()) {
+    if (state_.navigation.menu_visible || state_.content_request.busy ||
+        state_.page.status != reader_view_status::ready || !check_media()) {
         return;
     }
-    if (showing_cover_) {
+    if (state_.cover.showing) {
         if (action.control == ui_control_type::reader_next_zone) {
-            showing_cover_ = false;
-            user_navigated_ = true;
+            state_.cover.showing = false;
+            state_.navigation.user_navigated = true;
             start_body(0U, page_operation::open);
         }
         return;
     }
-    if (action.control == ui_control_type::reader_next_zone && !end_of_file_) {
-        user_navigated_ = true;
-        if (index_valid_ && index_position_valid_ && !book_waiting_ && current_page_ + 1U < total_pages_) {
-            indexed_operation_ = page_operation::next;
-            if (query_index(true, current_page_ + 1U)) { return; }
+    if (action.control == ui_control_type::reader_next_zone && !state_.page.end_of_file) {
+        state_.navigation.user_navigated = true;
+        if (state_.book.index_valid && state_.book.index_position_valid && !state_.book.waiting &&
+            state_.page.current_number + 1U < state_.page.total_count) {
+            state_.book.indexed_operation = page_operation::next;
+            if (query_index(true, state_.page.current_number + 1U)) { return; }
         }
-        start_page(next_offset_, page_operation::next);
-    } else if (action.control == ui_control_type::reader_previous_zone && current_offset_ == 0U &&
-               format_ == book_file_format::epub && cover_available_) {
-        user_navigated_ = true;
-        if (cover_generation_ != 0U) {
-            showing_cover_ = true;
+        start_page(state_.page.next_offset, page_operation::next);
+    } else if (action.control == ui_control_type::reader_previous_zone && state_.page.current_offset == 0U &&
+               state_.session.format == book_file_format::epub && state_.cover.available) {
+        state_.navigation.user_navigated = true;
+        if (state_.cover.generation != 0U) {
+            state_.cover.showing = true;
             update_status_page();
             submit_frame(ui_update_reason::content_changed);
         } else {
-            cover_offset_ = 0U;
-            cover_started_ = false;
-            cover_waiting_ = busy_ = true;
-            status_ = reader_view_status::loading;
-            loading_shown_ = false;
-            loading_started_ms_ = system_tick_now_ms();
+            state_.cover.offset = 0U;
+            state_.cover.started = false;
+            state_.cover.waiting = state_.content_request.busy = true;
+            state_.page.status = reader_view_status::loading;
+            state_.content_request.loading_shown = false;
+            state_.content_request.loading_started_ms = system_tick_now_ms();
             update_status_page();
             if (!request_cover()) {
-                cover_waiting_ = cover_available_ = false;
+                state_.cover.waiting = state_.cover.available = false;
                 start_body(0U, page_operation::open);
             }
         }
-    } else if (action.control == ui_control_type::reader_previous_zone && current_offset_ > 0U) {
-        user_navigated_ = true;
-        if (index_valid_ && index_position_valid_ && !book_waiting_ && current_page_ > 0U) {
-            indexed_operation_ = page_operation::previous;
-            if (query_index(true, current_page_ - 1U)) { return; }
+    } else if (action.control == ui_control_type::reader_previous_zone && state_.page.current_offset > 0U) {
+        state_.navigation.user_navigated = true;
+        if (state_.book.index_valid && state_.book.index_position_valid && !state_.book.waiting && state_.page.current_number > 0U) {
+            state_.book.indexed_operation = page_operation::previous;
+            if (query_index(true, state_.page.current_number - 1U)) { return; }
         }
         std::uint64_t previous = 0U;
         if (history_.previous(previous)) {
             start_page(previous, page_operation::previous);
         } else {
-            rebuild_target_ = current_offset_;
+            state_.page.rebuild_target = state_.page.current_offset;
             start_page(0U, page_operation::rebuild_previous);
         }
     }
@@ -245,20 +232,20 @@ void reader_app::handle_action(const ui_action_event& action)
 
 void reader_app::start_body(std::uint64_t offset, page_operation operation)
 {
-    showing_cover_ = false;
-    cover_waiting_ = false;
+    state_.cover.showing = false;
+    state_.cover.waiting = false;
     start_page(offset, operation);
 }
 
 void reader_app::start_page(std::uint64_t offset, page_operation operation)
 {
-    operation_ = operation;
+    state_.page.operation = operation;
     paginator_.reset(offset, layout_);
-    status_ = reader_view_status::loading;
-    busy_ = true;
-    waiting_ = false;
-    loading_shown_ = false;
-    loading_started_ms_ = system_tick_now_ms();
+    state_.page.status = reader_view_status::loading;
+    state_.content_request.busy = true;
+    state_.content_request.waiting = false;
+    state_.content_request.loading_shown = false;
+    state_.content_request.loading_started_ms = system_tick_now_ms();
 }
 
 void reader_app::request_chunk()
@@ -266,15 +253,17 @@ void reader_app::request_chunk()
     if (!check_media()) {
         return;
     }
-    ++request_id_;
-    requested_offset_ = paginator_.read_offset();
-    request_started_ms_ = system_tick_now_ms();
-    waiting_ = format_ == book_file_format::epub
-                   ? book_service_read(session_id_, media_generation_, request_id_,
-                                       book_content_kind::text, requested_offset_)
+    ++state_.content_request.id;
+    state_.content_request.requested_offset = paginator_.read_offset();
+    state_.content_request.started_ms = system_tick_now_ms();
+    state_.content_request.waiting = state_.session.format == book_file_format::epub
+                   ? book_service_read(state_.session.id, state_.session.media_generation, state_.content_request.id,
+                                       book_content_kind::text, state_.content_request.requested_offset)
                    : storage_service_read_file_chunk(
-                         path_, requested_offset_, request_id_, session_id_, media_generation_);
-    if (!waiting_) {
+                         state_.session.path, state_.content_request.requested_offset,
+                         state_.content_request.id, state_.session.id,
+                         state_.session.media_generation);
+    if (!state_.content_request.waiting) {
         fail(reader_view_status::storage_error);
     }
 }
@@ -282,15 +271,15 @@ void reader_app::request_chunk()
 void reader_app::handle_result(const result_handle& handle)
 {
     const storage_file_chunk_result* result = nullptr;
-    if (format_ != book_file_format::txt || !waiting_ ||
+    if (state_.session.format != book_file_format::txt || !state_.content_request.waiting ||
         !storage_service_resolve_file_result(handle, result) ||
-        result->session_id != session_id_ || result->request_id != request_id_ ||
-        result->media_generation != media_generation_ || result->offset != requested_offset_) {
+        result->session_id != state_.session.id || result->request_id != state_.content_request.id ||
+        result->media_generation != state_.session.media_generation || result->offset != state_.content_request.requested_offset) {
         return;
     }
     // The dispatcher owns the reference throughout this call. Consume/copy
     // synchronously; never retain a raw pointer after returning to it.
-    waiting_ = false;
+    state_.content_request.waiting = false;
     if (!check_media()) {
         return;
     }
@@ -307,13 +296,13 @@ void reader_app::handle_result(const result_handle& handle)
         fail(reader_view_status::storage_error);
         return;
     }
-    if (!metadata_known_) {
-        identity_.file_size = result->file_size;
-        identity_.modified_time = result->modified_time;
-        metadata_known_ = true;
-    } else if (identity_.file_size != result->file_size ||
-               identity_.modified_time != result->modified_time) {
-        position_valid_ = false;
+    if (!state_.book.metadata_known) {
+        state_.book.identity.file_size = result->file_size;
+        state_.book.identity.modified_time = result->modified_time;
+        state_.book.metadata_known = true;
+    } else if (state_.book.identity.file_size != result->file_size ||
+               state_.book.identity.modified_time != result->modified_time) {
+        state_.page.position_valid = false;
         fail(reader_view_status::storage_error);
         return;
     }
@@ -327,73 +316,74 @@ void reader_app::handle_result(const result_handle& handle)
 
 bool reader_app::request_cover()
 {
-    ++request_id_;
-    requested_offset_ = cover_offset_;
-    request_started_ms_ = system_tick_now_ms();
-    waiting_ = book_service_read(session_id_, media_generation_, request_id_,
-                                 book_content_kind::cover, cover_offset_);
-    if (!waiting_) { ui_reader_cover_cancel(); }
-    return waiting_;
+    ++state_.content_request.id;
+    state_.content_request.requested_offset = state_.cover.offset;
+    state_.content_request.started_ms = system_tick_now_ms();
+    state_.content_request.waiting = book_service_read(state_.session.id, state_.session.media_generation, state_.content_request.id,
+                                 book_content_kind::cover, state_.cover.offset);
+    if (!state_.content_request.waiting) { ui_reader_cover_cancel(); }
+    return state_.content_request.waiting;
 }
 
 void reader_app::handle_book_result(const result_handle& handle)
 {
     const book_content_result* result = nullptr;
-    if (format_ != book_file_format::epub || !waiting_ ||
+    if (state_.session.format != book_file_format::epub || !state_.content_request.waiting ||
         !book_service_resolve_result(handle, result) || result == nullptr ||
-        result->session_id != session_id_ || result->request_id != request_id_ ||
-        result->media_generation != media_generation_ || result->offset != requested_offset_) { return; }
-    waiting_ = false;
+        result->session_id != state_.session.id || result->request_id != state_.content_request.id ||
+        result->media_generation != state_.session.media_generation ||
+        result->offset != state_.content_request.requested_offset) { return; }
+    state_.content_request.waiting = false;
     if (!check_media()) { return; }
     if (result->error != ESP_OK || result->length > sizeof(result->data) ||
         result->offset > result->file_size || result->length > result->file_size - result->offset ||
         (result->length == 0U && !result->end_of_file)) {
-        if (cover_waiting_) {
+        if (state_.cover.waiting) {
             ui_reader_cover_cancel();
-            cover_waiting_ = cover_available_ = false;
+            state_.cover.waiting = state_.cover.available = false;
             start_body(0U, page_operation::open);
         } else { fail(reader_view_status::storage_error); }
         return;
     }
-    if (result->kind == book_content_kind::cover && cover_waiting_) {
-        if (!cover_started_) {
-            cover_started_ = ui_reader_cover_begin(static_cast<std::size_t>(result->file_size),
+    if (result->kind == book_content_kind::cover && state_.cover.waiting) {
+        if (!state_.cover.started) {
+            state_.cover.started = ui_reader_cover_begin(static_cast<std::size_t>(result->file_size),
                                                     result->cover_encoding);
-            if (!cover_started_) {
-                cover_waiting_ = cover_available_ = false;
+            if (!state_.cover.started) {
+                state_.cover.waiting = state_.cover.available = false;
                 start_body(0U, page_operation::open);
                 return;
             }
         }
         if (!ui_reader_cover_append(static_cast<std::size_t>(result->offset), result->data, result->length)) {
             ui_reader_cover_cancel();
-            cover_waiting_ = cover_available_ = false;
+            state_.cover.waiting = state_.cover.available = false;
             start_body(0U, page_operation::open);
             return;
         }
-        cover_offset_ += result->length;
+        state_.cover.offset += result->length;
         if (result->end_of_file) {
-            cover_generation_ = ui_reader_cover_commit();
-            cover_waiting_ = busy_ = false;
-            showing_cover_ = cover_generation_ != 0U;
-            if (!showing_cover_) {
-                cover_available_ = false;
+            state_.cover.generation = ui_reader_cover_commit();
+            state_.cover.waiting = state_.content_request.busy = false;
+            state_.cover.showing = state_.cover.generation != 0U;
+            if (!state_.cover.showing) {
+                state_.cover.available = false;
                 start_body(0U, page_operation::open);
             } else {
-                status_ = reader_view_status::ready;
+                state_.page.status = reader_view_status::ready;
                 update_status_page();
                 submit_frame(ui_update_reason::content_changed);
             }
         }
         return;
     }
-    if (result->kind != book_content_kind::text || cover_waiting_) { return; }
-    if (!metadata_known_) {
-        identity_.file_size = result->file_size;
-        identity_.modified_time = 0;
-        metadata_known_ = true;
-    } else if (identity_.file_size != result->file_size) {
-        position_valid_ = false;
+    if (result->kind != book_content_kind::text || state_.cover.waiting) { return; }
+    if (!state_.book.metadata_known) {
+        state_.book.identity.file_size = result->file_size;
+        state_.book.identity.modified_time = 0;
+        state_.book.metadata_known = true;
+    } else if (state_.book.identity.file_size != result->file_size) {
+        state_.page.position_valid = false;
         fail(reader_view_status::storage_error);
         return;
     }
@@ -410,39 +400,41 @@ void reader_app::complete_page()
         fail(reader_view_status::storage_error);
         return;
     }
-    if (operation_ == page_operation::rebuild_previous &&
-        page.next_page_start_offset < rebuild_target_ && !page.end_of_file) {
+    if (state_.page.operation == page_operation::rebuild_previous &&
+        page.next_page_start_offset < state_.page.rebuild_target && !page.end_of_file) {
         history_.push(page.current_page_start_offset);
         const auto next = page.next_page_start_offset;
         paginator_.reset(next, layout_);
         return;
     }
-    if (operation_ == page_operation::next) {
-        history_.push(current_offset_);
-    } else if (operation_ == page_operation::previous) {
+    if (state_.page.operation == page_operation::next) {
+        history_.push(state_.page.current_offset);
+    } else if (state_.page.operation == page_operation::previous) {
         history_.pop();
     }
-    current_offset_ = page.current_page_start_offset;
-    next_offset_ = page.next_page_start_offset;
-    end_of_file_ = page.end_of_file;
-    position_valid_ = true;
-    busy_ = false;
-    status_ = page.empty && page.end_of_file && current_offset_ == 0U
+    state_.page.current_offset = page.current_page_start_offset;
+    state_.page.next_offset = page.next_page_start_offset;
+    state_.page.end_of_file = page.end_of_file;
+    state_.page.position_valid = true;
+    state_.content_request.busy = false;
+    state_.page.status = page.empty && page.end_of_file && state_.page.current_offset == 0U
                   ? reader_view_status::empty_file : reader_view_status::ready;
-    index_position_valid_ = index_valid_ && indexed_target_valid_ && current_offset_ == indexed_target_offset_;
-    if (index_position_valid_) { current_page_ = indexed_target_page_; }
-    indexed_target_valid_ = false;
+    state_.book.index_position_valid = state_.book.index_valid &&
+        state_.book.indexed_target_valid &&
+        state_.page.current_offset == state_.book.indexed_target_offset;
+    if (state_.book.index_position_valid) { state_.page.current_number = state_.book.indexed_target_page; }
+    state_.book.indexed_target_valid = false;
     update_status_page();
     submit_frame(ui_update_reason::content_changed);
 }
 
 void reader_app::fail(reader_view_status status)
 {
-    waiting_ = busy_ = false;
-    cover_waiting_ = false;
+    state_.content_request.waiting = state_.content_request.busy = false;
+    state_.cover.waiting = false;
     ui_reader_cover_cancel();
-    index_lookup_ = book_waiting_ = index_position_valid_ = false;
-    status_ = status;
+    state_.book.index_lookup = state_.book.waiting = state_.book.index_position_valid = false;
+    state_.page.status = status;
     update_status_page();
     submit_frame(ui_update_reason::content_changed);
 }
@@ -451,27 +443,27 @@ void reader_app::submit_frame(ui_update_reason reason)
 {
     if (reason != ui_update_reason::popup_changed) {
         view_ = {};
-        view_.status = status_;
-        view_.file_size = identity_.file_size;
-        view_.progress_persistent = progress_persistent_;
-        view_.showing_cover = showing_cover_;
-        view_.cover_generation = cover_generation_;
-        if (status_ == reader_view_status::ready || status_ == reader_view_status::empty_file) {
+        view_.status = state_.page.status;
+        view_.file_size = state_.book.identity.file_size;
+        view_.progress_persistent = state_.book.progress_persistent;
+        view_.showing_cover = state_.cover.showing;
+        view_.cover_generation = state_.cover.generation;
+        if (state_.page.status == reader_view_status::ready || state_.page.status == reader_view_status::empty_file) {
             view_.page = paginator_.page();
-            view_.previous_enabled = !showing_cover_ &&
-                (current_offset_ > 0U || (format_ == book_file_format::epub && cover_available_));
-            view_.next_enabled = showing_cover_ || !end_of_file_;
+            view_.previous_enabled = !state_.cover.showing &&
+                (state_.page.current_offset > 0U || (state_.session.format == book_file_format::epub && state_.cover.available));
+            view_.next_enabled = state_.cover.showing || !state_.page.end_of_file;
         }
     }
-    view_.menu_visible = menu_visible_;
-    if (frame_pending_ && pending_reason_ == ui_update_reason::view_opened) {
+    view_.menu_visible = state_.navigation.menu_visible;
+    if (state_.presentation.frame_pending && state_.presentation.pending_reason == ui_update_reason::view_opened) {
         reason = ui_update_reason::view_opened;
-    } else if (frame_pending_ && pending_reason_ == ui_update_reason::content_changed &&
+    } else if (state_.presentation.frame_pending && state_.presentation.pending_reason == ui_update_reason::content_changed &&
                reason == ui_update_reason::popup_changed) {
         reason = ui_update_reason::content_changed;
     }
-    pending_reason_ = reason;
-    frame_pending_ = !ui_write_reader_frame(reason, write_frame, this);
+    state_.presentation.pending_reason = reason;
+    state_.presentation.frame_pending = !ui_write_reader_frame(reason, write_frame, this);
 }
 
 bool reader_app::write_frame(reader_view_state& view, const void* context)
@@ -483,43 +475,45 @@ bool reader_app::write_frame(reader_view_state& view, const void* context)
 
 void reader_app::update_status_page()
 {
-    const bool valid = active_ && index_valid_ && index_position_valid_ && position_valid_ &&
-        !showing_cover_ && current_page_ < total_pages_ &&
-        (status_ == reader_view_status::ready || status_ == reader_view_status::empty_file);
-    if (ui_status_bar_update_reader_page(valid, valid ? current_page_ + 1U : 0U, valid ? total_pages_ : 0U)) {
+    const bool valid = state_.session.active && state_.book.index_valid && state_.book.index_position_valid && state_.page.position_valid &&
+        !state_.cover.showing && state_.page.current_number < state_.page.total_count &&
+        (state_.page.status == reader_view_status::ready || state_.page.status == reader_view_status::empty_file);
+    if (ui_status_bar_update_reader_page(valid, valid ? state_.page.current_number + 1U : 0U, valid ? state_.page.total_count : 0U)) {
         ui_renderer_notify_status_bar();
     }
 }
 
 bool reader_app::query_index(bool by_page, std::uint32_t page)
 {
-    if (!index_valid_ || book_waiting_ || !book_submitted_) { return false; }
-    ++book_request_id_;
-    if (!book_service_query(session_id_, media_generation_, book_request_id_, by_page, page, current_offset_)) {
+    if (!state_.book.index_valid || state_.book.waiting || !state_.book.submitted) { return false; }
+    ++state_.book.request_id;
+    if (!book_service_query(state_.session.id, state_.session.media_generation,
+                            state_.book.request_id, by_page, page,
+                            state_.page.current_offset)) {
         return false;
     }
-    book_waiting_ = true;
-    queried_offset_ = current_offset_;
-    book_request_started_ms_ = system_tick_now_ms();
+    state_.book.waiting = true;
+    state_.book.queried_offset = state_.page.current_offset;
+    state_.book.request_started_ms = system_tick_now_ms();
     if (by_page) {
-        index_lookup_ = busy_ = true;
-        waiting_ = false;
-        loading_shown_ = false;
-        loading_started_ms_ = book_request_started_ms_;
-        status_ = reader_view_status::loading;
+        state_.book.index_lookup = state_.content_request.busy = true;
+        state_.content_request.waiting = false;
+        state_.content_request.loading_shown = false;
+        state_.content_request.loading_started_ms = state_.book.request_started_ms;
+        state_.page.status = reader_view_status::loading;
     }
     return true;
 }
 
 void reader_app::handle_book_event(const book_service_event& event)
 {
-    if (!book_submitted_ || event.session_id != session_id_ || event.media_generation != media_generation_ ||
-        event.format != format_ || !check_media()) { return; }
-    const bool persistence_changed = progress_persistent_ != event.persistent;
-    progress_persistent_ = event.persistent;
+    if (!state_.book.submitted || event.session_id != state_.session.id || event.media_generation != state_.session.media_generation ||
+        event.format != state_.session.format || !check_media()) { return; }
+    const bool persistence_changed = state_.book.progress_persistent != event.persistent;
+    state_.book.progress_persistent = event.persistent;
     if (event.error != ESP_OK) {
-        index_valid_ = index_position_valid_ = book_waiting_ = false;
-        if (format_ == book_file_format::epub && !content_ready_) {
+        state_.book.index_valid = state_.book.index_position_valid = state_.book.waiting = false;
+        if (state_.session.format == book_file_format::epub && !state_.book.content_ready) {
             const auto status = event.error == ESP_ERR_NOT_SUPPORTED
                                     ? reader_view_status::unsupported_epub
                                     : (event.error == ESP_ERR_INVALID_ARG || event.error == ESP_ERR_INVALID_SIZE ||
@@ -530,86 +524,86 @@ void reader_app::handle_book_event(const book_service_event& event)
             fail(status);
             return;
         }
-        if (index_lookup_) { index_lookup_ = false; fail(reader_view_status::storage_error); }
+        if (state_.book.index_lookup) { state_.book.index_lookup = false; fail(reader_view_status::storage_error); }
         update_status_page();
         if (persistence_changed) { submit_frame(ui_update_reason::content_changed); }
         return;
     }
-    if (event.content_ready && metadata_known_ &&
-        (event.file_size != identity_.file_size ||
-         (format_ == book_file_format::txt && event.modified_time != identity_.modified_time))) {
-        position_valid_ = false;
-        index_valid_ = false;
+    if (event.content_ready && state_.book.metadata_known &&
+        (event.file_size != state_.book.identity.file_size ||
+         (state_.session.format == book_file_format::txt && event.modified_time != state_.book.identity.modified_time))) {
+        state_.page.position_valid = false;
+        state_.book.index_valid = false;
         fail(reader_view_status::storage_error);
         return;
     }
     if (event.type == book_event_type::opened) {
-        book_opened_ = true;
+        state_.book.opened = true;
         if (!event.content_ready) { return; }
-        content_ready_ = true;
-        if (!metadata_known_) {
-            identity_.file_size = event.file_size;
-            identity_.modified_time = event.modified_time;
-            metadata_known_ = true;
+        state_.book.content_ready = true;
+        if (!state_.book.metadata_known) {
+            state_.book.identity.file_size = event.file_size;
+            state_.book.identity.modified_time = event.modified_time;
+            state_.book.metadata_known = true;
         }
-        cover_available_ = event.cover_available;
-        if (format_ == book_file_format::epub && !user_navigated_ &&
-            event.resume_at_cover && cover_available_) {
-            cover_offset_ = 0U;
-            cover_started_ = false;
-            cover_waiting_ = busy_ = true;
-            status_ = reader_view_status::loading;
-            loading_started_ms_ = system_tick_now_ms();
+        state_.cover.available = event.cover_available;
+        if (state_.session.format == book_file_format::epub && !state_.navigation.user_navigated &&
+            event.resume_at_cover && state_.cover.available) {
+            state_.cover.offset = 0U;
+            state_.cover.started = false;
+            state_.cover.waiting = state_.content_request.busy = true;
+            state_.page.status = reader_view_status::loading;
+            state_.content_request.loading_started_ms = system_tick_now_ms();
             if (!request_cover()) {
-                cover_waiting_ = cover_available_ = false;
+                state_.cover.waiting = state_.cover.available = false;
                 start_body(0U, page_operation::open);
             }
-        } else if (!user_navigated_ && event.progress.byte_offset > 0U && event.progress.byte_offset < event.file_size) {
+        } else if (!state_.navigation.user_navigated && event.progress.byte_offset > 0U && event.progress.byte_offset < event.file_size) {
             history_.clear();
             start_body(event.progress.byte_offset, page_operation::open);
-        } else if (format_ == book_file_format::epub && !position_valid_ && !busy_) {
+        } else if (state_.session.format == book_file_format::epub && !state_.page.position_valid && !state_.content_request.busy) {
             start_body(event.progress.byte_offset, page_operation::open);
         }
     } else if (event.type == book_event_type::ready) {
-        book_opened_ = true;
-        index_valid_ = event.index_valid && event.page_count > 0U && event.progress.page < event.page_count;
-        total_pages_ = index_valid_ ? event.page_count : 0U;
-        if (index_valid_ && !user_navigated_ && !showing_cover_ && !cover_waiting_) {
-            indexed_target_valid_ = true;
-            indexed_target_page_ = event.progress.page;
-            indexed_target_offset_ = event.progress.byte_offset;
-            if (position_valid_ && !busy_ && current_offset_ == event.progress.byte_offset) {
-                current_page_ = event.progress.page;
-                index_position_valid_ = true;
-                indexed_target_valid_ = false;
+        state_.book.opened = true;
+        state_.book.index_valid = event.index_valid && event.page_count > 0U && event.progress.page < event.page_count;
+        state_.page.total_count = state_.book.index_valid ? event.page_count : 0U;
+        if (state_.book.index_valid && !state_.navigation.user_navigated && !state_.cover.showing && !state_.cover.waiting) {
+            state_.book.indexed_target_valid = true;
+            state_.book.indexed_target_page = event.progress.page;
+            state_.book.indexed_target_offset = event.progress.byte_offset;
+            if (state_.page.position_valid && !state_.content_request.busy && state_.page.current_offset == event.progress.byte_offset) {
+                state_.page.current_number = event.progress.page;
+                state_.book.index_position_valid = true;
+                state_.book.indexed_target_valid = false;
                 update_status_page();
             } else {
                 history_.clear();
                 start_page(event.progress.byte_offset, page_operation::open);
             }
         }
-    } else if (event.type == book_event_type::position && book_waiting_ && event.request_id == book_request_id_) {
-        book_waiting_ = false;
-        const bool load = index_lookup_;
-        index_lookup_ = false;
-        if (!event.index_valid || event.page_count != total_pages_ || event.progress.page >= total_pages_) {
-            index_valid_ = index_position_valid_ = false;
+    } else if (event.type == book_event_type::position && state_.book.waiting && event.request_id == state_.book.request_id) {
+        state_.book.waiting = false;
+        const bool load = state_.book.index_lookup;
+        state_.book.index_lookup = false;
+        if (!event.index_valid || event.page_count != state_.page.total_count || event.progress.page >= state_.page.total_count) {
+            state_.book.index_valid = state_.book.index_position_valid = false;
             if (load) { fail(reader_view_status::storage_error); }
             update_status_page();
             return;
         }
-        if (load || (!busy_ && queried_offset_ == current_offset_ &&
-            (status_ == reader_view_status::ready || status_ == reader_view_status::empty_file))) {
-            indexed_target_page_ = event.progress.page;
-            indexed_target_offset_ = event.progress.byte_offset;
-            indexed_target_valid_ = true;
-            if (load || current_offset_ != event.progress.byte_offset) {
+        if (load || (!state_.content_request.busy && state_.book.queried_offset == state_.page.current_offset &&
+            (state_.page.status == reader_view_status::ready || state_.page.status == reader_view_status::empty_file))) {
+            state_.book.indexed_target_page = event.progress.page;
+            state_.book.indexed_target_offset = event.progress.byte_offset;
+            state_.book.indexed_target_valid = true;
+            if (load || state_.page.current_offset != event.progress.byte_offset) {
                 if (!load) { history_.clear(); }
-                start_page(event.progress.byte_offset, load ? indexed_operation_ : page_operation::open);
+                start_page(event.progress.byte_offset, load ? state_.book.indexed_operation : page_operation::open);
             } else {
-                current_page_ = event.progress.page;
-                index_position_valid_ = true;
-                indexed_target_valid_ = false;
+                state_.page.current_number = event.progress.page;
+                state_.book.index_position_valid = true;
+                state_.book.indexed_target_valid = false;
                 update_status_page();
             }
         }

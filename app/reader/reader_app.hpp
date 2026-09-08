@@ -3,6 +3,7 @@
 #include "app_base.hpp"
 #include "text_paginator.hpp"
 #include "book_service.hpp"
+#include "reader_launch.hpp"
 #include "storage_service.hpp"
 #include "ui_renderer.hpp"
 #include "reader_cover.hpp"
@@ -20,61 +21,94 @@ protected:
 private:
     enum class page_operation : std::uint8_t { open, next, previous, rebuild_previous };
 
-    char path_[STORAGE_MAX_PATH_LENGTH + 1U] = {};
-    book_file_format format_ = book_file_format::unknown;
-    book_file_identity identity_ = {};
+    struct session_state {
+        char path[STORAGE_MAX_PATH_LENGTH + 1U] = {};
+        std::uint32_t id = 0U;
+        std::uint32_t media_generation = 0U;
+        book_file_format format = book_file_format::unknown;
+        bool prepared = false;
+        bool active = false;
+        bool media_valid = false;
+    };
+
+    struct page_state {
+        std::uint64_t current_offset = 0U;
+        std::uint64_t next_offset = 0U;
+        std::uint64_t rebuild_target = 0U;
+        std::uint32_t current_number = 0U;
+        std::uint32_t total_count = 0U;
+        reader_view_status status = reader_view_status::loading;
+        page_operation operation = page_operation::open;
+        bool position_valid = false;
+        bool end_of_file = false;
+    };
+
+    struct content_request_state {
+        std::uint64_t requested_offset = 0U;
+        std::uint32_t id = 0U;
+        std::uint32_t started_ms = 0U;
+        std::uint32_t loading_started_ms = 0U;
+        bool busy = false;
+        bool waiting = false;
+        bool loading_shown = false;
+    };
+
+    struct book_state {
+        book_file_identity identity = {};
+        std::uint64_t indexed_target_offset = 0U;
+        std::uint64_t queried_offset = 0U;
+        std::uint32_t request_id = 0U;
+        std::uint32_t request_started_ms = 0U;
+        std::uint32_t indexed_target_page = 0U;
+        page_operation indexed_operation = page_operation::open;
+        bool metadata_known = false;
+        bool opened = false;
+        bool submitted = false;
+        bool progress_persistent = false;
+        bool index_valid = false;
+        bool index_position_valid = false;
+        bool waiting = false;
+        bool index_lookup = false;
+        bool indexed_target_valid = false;
+        bool content_ready = false;
+    };
+
+    struct cover_state {
+        std::uint64_t offset = 0U;
+        std::uint32_t generation = 0U;
+        bool available = false;
+        bool showing = false;
+        bool waiting = false;
+        bool started = false;
+    };
+
+    struct navigation_state {
+        bool menu_visible = false;
+        bool user_navigated = false;
+    };
+
+    struct presentation_state {
+        ui_update_reason pending_reason = ui_update_reason::view_opened;
+        bool frame_pending = false;
+    };
+
+    struct reader_runtime_state {
+        session_state session;
+        page_state page;
+        content_request_state content_request;
+        book_state book;
+        cover_state cover;
+        navigation_state navigation;
+        presentation_state presentation;
+    };
+
+    reader_runtime_state state_;
+    std::uint32_t session_serial_ = 0U;
     reader_paginator paginator_;
     reader_page_history history_;
     text_layout_profile layout_ = {};
     // Stable body snapshot: a menu toggle must not expose an in-flight paginator.
     reader_view_state view_ = {};
-    bool menu_visible_ = false;
-    std::uint64_t current_offset_ = 0U;
-    std::uint64_t next_offset_ = 0U;
-    std::uint64_t requested_offset_ = 0U;
-    std::uint64_t rebuild_target_ = 0U;
-    std::uint32_t session_id_ = 0U;
-    std::uint32_t request_id_ = 0U;
-    std::uint32_t media_generation_ = 0U;
-    std::uint32_t request_started_ms_ = 0U;
-    std::uint32_t loading_started_ms_ = 0U;
-    reader_view_status status_ = reader_view_status::loading;
-    page_operation operation_ = page_operation::open;
-    ui_update_reason pending_reason_ = ui_update_reason::view_opened;
-    bool prepared_ = false;
-    bool active_ = false;
-    bool media_valid_ = false;
-    bool metadata_known_ = false;
-    bool position_valid_ = false;
-    bool end_of_file_ = false;
-    bool busy_ = false;
-    bool waiting_ = false;
-    bool loading_shown_ = false;
-    bool frame_pending_ = false;
-    bool book_opened_ = false;
-    bool book_submitted_ = false;
-    bool progress_persistent_ = false;
-    bool index_valid_ = false;
-    bool index_position_valid_ = false;
-    bool book_waiting_ = false;
-    bool index_lookup_ = false;
-    bool user_navigated_ = false;
-    bool indexed_target_valid_ = false;
-    bool content_ready_ = false;
-    bool cover_available_ = false;
-    bool showing_cover_ = false;
-    bool cover_waiting_ = false;
-    bool cover_started_ = false;
-    std::uint32_t current_page_ = 0U;
-    std::uint32_t total_pages_ = 0U;
-    std::uint32_t book_request_id_ = 0U;
-    std::uint32_t book_request_started_ms_ = 0U;
-    std::uint32_t indexed_target_page_ = 0U;
-    std::uint64_t indexed_target_offset_ = 0U;
-    std::uint64_t queried_offset_ = 0U;
-    std::uint64_t cover_offset_ = 0U;
-    std::uint32_t cover_generation_ = 0U;
-    page_operation indexed_operation_ = page_operation::open;
 
     void handle_action(const ui_action_event& action);
     void handle_result(const result_handle& handle);

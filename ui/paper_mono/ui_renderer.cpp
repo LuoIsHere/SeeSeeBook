@@ -366,6 +366,10 @@ void draw_full_view(
         case ui_view_id::reader:
             paper_mono_views::draw_reader_view(canvas(), request.payload.reader);
             break;
+        case ui_view_id::gray4_test:
+            paper_mono_views::draw_gray4_test_view(
+                canvas(), request.payload.gray4_test);
+            break;
     }
 }
 
@@ -943,6 +947,20 @@ bool ui_render_battery(const battery_view_state& state, ui_update_reason reason)
         request->mode != refresh_mode::quality) {
         request->update_region = display_update_region::battery_content;
     }
+    return submit_request(handle, *request);
+}
+
+bool ui_render_gray4_test(
+    const gray4_test_view_state& state,
+    ui_update_reason reason)
+{
+    ui_frame_handle handle = invalid_ui_frame_handle();
+    display_request* request = nullptr;
+    if (!acquire_request(ui_view_id::gray4_test, reason, handle, request) ||
+        request == nullptr) {
+        return false;
+    }
+    request->payload.gray4_test = state;
     return submit_request(handle, *request);
 }
 

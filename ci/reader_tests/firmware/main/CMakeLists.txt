@@ -1,6 +1,9 @@
 get_filename_component(ROOT "${CMAKE_CURRENT_LIST_DIR}/../../../.." ABSOLUTE)
 idf_component_register(
     SRCS "test_main.cpp" "book_tests.cpp" "epub_tests.cpp" "reader_ui_tests.cpp"
+         "gray4_tests.cpp"
+         "${ROOT}/m5_hal/paper_mono/display/gray4_framebuffer.cpp"
+         "${ROOT}/m5_hal/paper_mono/display/gray4_otp_encoding.cpp"
          "${ROOT}/ui/paper_mono/views/reader_renderer.cpp"
          "${ROOT}/ui/paper_mono/views/renderer_helpers.cpp"
          "${ROOT}/app/app.cpp"
@@ -25,4 +28,6 @@ idf_component_register(
                  "${ROOT}/services/include/services" "${ROOT}/ui/include/ui"
                  "${ROOT}/services/book" "${ROOT}/ui"
                  "${ROOT}/ui/paper_mono" "${ROOT}/m5_hal/include/hal"
+                 "${ROOT}/m5_hal/paper_mono"
+                 "${ROOT}/m5_hal/paper_mono/display"
     REQUIRES core mooncake esp_timer json mbedtls esp_rom)

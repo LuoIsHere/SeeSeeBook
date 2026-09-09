@@ -6,6 +6,7 @@
 
 #include "battery_view.hpp"
 #include "file_view.hpp"
+#include "gray4_test_view.hpp"
 #include "menu_view.hpp"
 #include "reader_view.hpp"
 #include "rtc_view.hpp"
@@ -35,6 +36,9 @@ bool ui_render_rtc(
     std::uint8_t released_index = 0U);
 bool ui_render_battery(
     const battery_view_state& state,
+    ui_update_reason reason);
+bool ui_render_gray4_test(
+    const gray4_test_view_state& state,
     ui_update_reason reason);
 
 using file_frame_writer = bool (*)(

@@ -5,6 +5,8 @@ idf_component_register(
         "paper_mono/paper_mono_display.cpp"
         "paper_mono/display/epd_otp_driver.cpp"
         "paper_mono/display/epd_otp_transport.cpp"
+        "paper_mono/display/gray4_framebuffer.cpp"
+        "paper_mono/display/gray4_otp_encoding.cpp"
         "paper_mono/paper_mono_internal_i2c.cpp"
         "paper_mono/paper_mono_rtc.cpp"
         "paper_mono/paper_mono_storage.cpp"

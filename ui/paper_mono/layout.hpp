@@ -18,7 +18,7 @@
 #define MENU_ENTRY_HEIGHT 96
 #define MENU_ENTRY_TEXT_SIZE 3U
 
-static_assert(menu_view_entry_capacity == 4U);
+static_assert(menu_view_entry_capacity == 5U);
 
 #define RTC_BACK_BUTTON_LEFT 20
 #define RTC_BACK_BUTTON_TOP 20
@@ -227,6 +227,8 @@ constexpr display_rect app_back_button_rect(ui_view_id view)
             return file_back_button_rect();
         case ui_view_id::reader:
             return reader_menu_item_rect(0U);
+        case ui_view_id::gray4_test:
+            return rtc_back_button_rect();
         case ui_view_id::menu:
             return {0, 0, 0, 0};
     }

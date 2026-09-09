@@ -5,6 +5,7 @@
 
 #include "book_types.hpp"
 #include "geometry.hpp"
+#include "gray4_framebuffer.hpp"
 
 enum class refresh_mode : std::uint8_t {
     fastest,
@@ -50,7 +51,9 @@ public:
     std::int16_t height() const;
 
     void fill_screen(display_color color);
+    void fill_screen(display_gray4 color);
     void fill_rect(const display_rect& rect, display_color color);
+    bool fill_rect(const display_rect& rect, display_gray4 color);
     void fill_rect(
         std::int16_t x,
         std::int16_t y,
@@ -86,12 +89,15 @@ public:
 
     void set_font(display_font font);
     void set_text_color(display_color foreground, display_color background);
+    void set_text_color(display_gray4 foreground, display_gray4 background);
     void set_text_alignment(display_text_alignment alignment);
     void set_text_size(std::uint8_t size);
     void draw_text(const char* text, std::int16_t x, std::int16_t y);
     std::int32_t text_width(const char* text) const;
     bool draw_image(const std::uint8_t* data, std::size_t length,
                     book_cover_encoding encoding, const display_rect& rect);
+    bool set_pixel(std::int16_t x, std::int16_t y, display_gray4 color);
+    bool has_intermediate_gray() const;
 };
 
 // Initializes the active display backend.

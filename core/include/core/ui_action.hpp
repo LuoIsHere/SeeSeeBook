@@ -12,6 +12,7 @@ enum class ui_view_id : std::uint8_t {
     battery,
     file,
     reader,
+    gray4_test,
 };
 
 enum class ui_control_type : std::uint8_t {

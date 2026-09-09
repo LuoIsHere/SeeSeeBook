@@ -10,6 +10,7 @@ The test sources cover:
 - `firmware/main/book_tests.cpp`: book format detection, progress records, page-index records, index construction, and stale-record rejection.
 - `firmware/main/epub_tests.cpp`: EPUB ZIP/container/OPF parsing, spine text extraction, cover extraction, cache generation, limits, and invalid or unsupported input handling.
 - `firmware/main/reader_ui_tests.cpp`: Reader view rendering, menu behavior, status rendering, cover rendering, and PaperMono frame contents.
+- `firmware/main/gray4_tests.cpp`: unified 2bpp packing, pixel bounds, four-level quantization, intermediate-gray detection, and SSD1677 mono/Gray4 RAM encoding.
 - `run_tests.py`: optional ESP-IDF build, QEMU flash-image assembly, QEMU execution, log monitoring, and result reporting.
 
 ## Environment and dependencies
@@ -48,6 +49,7 @@ The runner generates `firmware/build/`, `firmware/sdkconfig`, `test_build.log`, 
 - `firmware/main/book_tests.cpp`：测试书籍格式识别、进度记录、页索引记录、索引构建和过期记录拒绝。
 - `firmware/main/epub_tests.cpp`：测试 EPUB ZIP/container/OPF 解析、spine 正文提取、封面提取、缓存生成、资源限制以及非法或不支持输入的处理。
 - `firmware/main/reader_ui_tests.cpp`：测试 Reader 视图、顶部菜单、状态显示、封面显示和 PaperMono 帧内容。
+- `firmware/main/gray4_tests.cpp`：测试统一 2bpp 打包、像素边界、四档量化、中间灰阶检测以及 SSD1677 单色/四灰度 RAM 编码。
 - `run_tests.py`：按需执行 ESP-IDF 构建，合成 QEMU Flash 镜像，启动 QEMU，监控日志并判断结果。
 
 ## 运行环境和依赖

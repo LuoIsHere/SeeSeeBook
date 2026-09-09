@@ -6,6 +6,7 @@
 #include "battery_view.hpp"
 #include "display.hpp"
 #include "file_view.hpp"
+#include "gray4_test_view.hpp"
 #include "menu_view.hpp"
 #include "reader_view.hpp"
 #include "rtc_view.hpp"
@@ -45,6 +46,7 @@ union display_view_payload {
     test_view_state test;
     rtc_view_state rtc;
     battery_view_state battery;
+    gray4_test_view_state gray4_test;
     file_view_state file;
     reader_view_state reader;
 };

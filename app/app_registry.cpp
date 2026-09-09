@@ -8,6 +8,7 @@
 #include "app_descriptor.hpp"
 #include "battery/battery_app.hpp"
 #include "file/file_app.hpp"
+#include "gray4_test/gray4_test_app.hpp"
 #include "menu/menu_app.hpp"
 #include "menu/menu_layout.hpp"
 #include "reader/reader_app.hpp"
@@ -40,6 +41,8 @@ constexpr app_registration registrations[] = {
      &create_app<battery_app>},
     {{app_kind::file, ui_view_id::file, "FileApp"}, &create_app<file_app>},
     {{app_kind::reader, ui_view_id::reader, "ReaderApp"}, &create_app<reader_app>},
+    {{app_kind::gray4_test, ui_view_id::gray4_test, "Gray4TestApp"},
+     &create_app<gray4_test_app>},
 };
 
 std::array<app_record, std::size(registrations)> records = {};

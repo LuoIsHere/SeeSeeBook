@@ -38,6 +38,7 @@
 void test_book_formats_and_engine();
 void test_epub_support();
 void test_reader_rendering();
+void test_gray4_support();
 std::string make_epub_fixture(bool cover, char filler);
 
 #define CHECK(condition) do { if (!(condition)) { \
@@ -926,6 +927,7 @@ extern "C" void app_main()
         unsigned(sizeof(display_request)), unsigned(sizeof(storage_file_chunk_result)));
     test_launch_context();
     test_reader_rendering();
+    test_gray4_support();
     test_pagination(); test_names();
     test_book_formats_and_engine(); test_epub_support();
     filesystem_lock = xSemaphoreCreateMutex(); read_gate = xSemaphoreCreateBinary();

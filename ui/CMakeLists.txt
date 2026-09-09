@@ -7,6 +7,7 @@ idf_component_register(
         "paper_mono/views/reader_renderer.cpp"
         "paper_mono/views/battery_renderer.cpp"
         "paper_mono/views/file_renderer.cpp"
+        "paper_mono/views/gray4_test_renderer.cpp"
         "paper_mono/views/menu_renderer.cpp"
         "paper_mono/views/renderer_helpers.cpp"
         "paper_mono/views/rtc_renderer.cpp"

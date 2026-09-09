@@ -4,7 +4,7 @@
 #include <cstdint>
 #include <type_traits>
 
-inline constexpr std::size_t menu_view_entry_capacity = 4U;
+inline constexpr std::size_t menu_view_entry_capacity = 5U;
 inline constexpr std::size_t menu_view_label_capacity = 24U;
 
 struct menu_entry_view_state {

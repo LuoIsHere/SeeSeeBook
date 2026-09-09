@@ -16,6 +16,7 @@ inline constexpr menu_entry_descriptor menu_entries[] = {
     {app_kind::rtc_setting, "RTC Setting"},
     {app_kind::battery, "Battery"},
     {app_kind::file, "Files"},
+    {app_kind::gray4_test, "Gray4 Test"},
 };
 
 inline constexpr std::size_t menu_layout_entry_count = std::size(menu_entries);

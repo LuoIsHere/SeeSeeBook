@@ -14,6 +14,7 @@ enum class app_kind : std::uint8_t {
     battery,
     file,
     reader,
+    gray4_test,
 };
 
 esp_err_t app_init();

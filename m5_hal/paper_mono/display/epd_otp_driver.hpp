@@ -14,6 +14,7 @@ namespace paper_mono {
 enum class otp_refresh_kind : std::uint8_t {
     partial,
     full_mono,
+    full_gray4,
 };
 
 enum class otp_refresh_error : std::uint8_t {
@@ -38,12 +39,14 @@ struct otp_refresh_result {
 };
 
 // Initializes the SSD1677 and stores an invisible white differential baseline.
+// The input uses the shared native 2bpp framebuffer contract.
 bool epd_otp_driver_init(
     const std::uint8_t* white_frame,
     std::size_t frame_size);
 
-// Refreshes through an official OTP sequence. The rectangle remains semantic
-// metadata until a controller-verified regional transfer sequence is available.
+// Refreshes the native 2bpp framebuffer through an official OTP sequence. The
+// rectangle remains semantic metadata until a controller-verified regional
+// transfer sequence is available.
 otp_refresh_result epd_otp_driver_refresh(
     const std::uint8_t* frame,
     std::size_t frame_size,

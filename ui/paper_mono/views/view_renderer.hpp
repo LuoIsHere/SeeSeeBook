@@ -5,6 +5,7 @@
 #include "battery_view.hpp"
 #include "display.hpp"
 #include "file_view.hpp"
+#include "gray4_test_view.hpp"
 #include "menu_view.hpp"
 #include "reader_view.hpp"
 #include "rtc_view.hpp"
@@ -12,6 +13,9 @@
 
 namespace paper_mono_views {
 
+void draw_gray4_test_view(
+    display_surface& surface,
+    const gray4_test_view_state& state);
 void draw_reader_view(display_surface& surface, const reader_view_state& state);
 
 void draw_menu_view(

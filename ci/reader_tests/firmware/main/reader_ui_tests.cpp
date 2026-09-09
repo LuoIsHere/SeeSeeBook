@@ -5,6 +5,7 @@
 #define ui_render_test tested_ui_render_test
 #define ui_render_rtc tested_ui_render_rtc
 #define ui_render_battery tested_ui_render_battery
+#define ui_render_gray4_test tested_ui_render_gray4_test
 #define ui_write_file_frame tested_ui_write_file_frame
 #define ui_write_reader_frame tested_ui_write_reader_frame
 #define ui_render_control tested_ui_render_control
@@ -99,6 +100,7 @@ void draw_rtc_key(display_surface&, std::uint8_t, bool, bool) {}
 bool rtc_keys_enabled(const rtc_view_state&) { return false; }
 void draw_battery_view(display_surface&, const battery_view_state&) {}
 void draw_battery_content(display_surface&, const battery_view_state&) {}
+void draw_gray4_test_view(display_surface&, const gray4_test_view_state&) {}
 void draw_file_view(display_surface&, const file_view_state&) {}
 void draw_file_content(display_surface&, const file_view_state&) {}
 void draw_file_row(display_surface&, const file_view_state&, std::uint8_t, bool) {}

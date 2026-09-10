@@ -5,8 +5,10 @@
 #include <esp_err.h>
 
 #include "battery_view.hpp"
+#include "books_view.hpp"
 #include "file_view.hpp"
 #include "gray4_test_view.hpp"
+#include "launcher_view.hpp"
 #include "menu_view.hpp"
 #include "reader_view.hpp"
 #include "rtc_view.hpp"
@@ -23,6 +25,13 @@ enum class ui_update_reason : std::uint8_t {
 
 esp_err_t ui_renderer_init();
 
+bool ui_render_launcher(
+    const launcher_view_state& state,
+    ui_update_reason reason);
+bool ui_render_books(
+    const books_view_state& state,
+    ui_update_reason reason,
+    ui_control_type changed_control = ui_control_type::none);
 bool ui_render_menu(
     const menu_view_state& state,
     ui_update_reason reason);
@@ -69,6 +78,13 @@ bool ui_status_bar_update_time(
     bool valid);
 bool ui_status_bar_update_battery(const battery_snapshot& snapshot);
 bool ui_status_bar_set_foreground(ui_view_id app);
+bool ui_status_bar_set_center_text(const char* text);
+bool ui_status_bar_set_page_status(
+    bool valid,
+    std::uint32_t current,
+    std::uint32_t total);
+bool ui_status_bar_clear_center();
+// Compatibility boundary for ReaderApp; the stored center model is generic.
 bool ui_status_bar_update_reader_page(bool valid, std::uint32_t current, std::uint32_t total);
 status_bar_view_state ui_status_bar_get_state();
 void ui_renderer_notify_status_bar();

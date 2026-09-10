@@ -5,6 +5,7 @@
 #include <lgfx/v1/lgfx_fonts.hpp>
 
 #include "layout.hpp"
+#include "books_layout.hpp"
 #include "text_layout_internal.hpp"
 #include "utf8.hpp"
 
@@ -38,6 +39,15 @@ text_layout_profile ui_reader_text_layout()
 text_layout_profile ui_file_name_text_layout()
 {
     return {FILE_ROW_WIDTH - 36, 1U, glyph_width};
+}
+
+text_layout_profile ui_books_file_name_text_layout()
+{
+    return {
+        BOOKS_GRID_CELL_WIDTH,
+        books_file_name_line_count,
+        glyph_width,
+    };
 }
 
 void paper_mono_draw_cjk_text(

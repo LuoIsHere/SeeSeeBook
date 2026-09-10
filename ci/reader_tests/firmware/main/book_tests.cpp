@@ -12,7 +12,7 @@
 
 #include "book_format.hpp"
 #include "book_index_engine.hpp"
-#include "reader_status_layout.hpp"
+#include "status_bar_layout.hpp"
 
 namespace {
 unsigned checks = 0U;
@@ -417,25 +417,30 @@ void test_engine()
 void test_status()
 {
     status_bar_view_state state = {};
-    state.foreground_app = ui_view_id::reader;
-    VERIFY(!make_reader_status_layout(state, 480).visible);
-    state.reader_page_valid = true;
+    VERIFY(!make_status_bar_page_layout(state, 480).visible);
+    state.center_kind = status_bar_center_kind::page;
     for (const auto& pair : {std::pair<unsigned, unsigned>{1, 1}, {12, 438}, {999999, 999999}}) {
-        state.current_page = pair.first; state.total_pages = pair.second;
-        const auto draw = make_reader_status_layout(state, 480);
+        state.center_current_page = pair.first;
+        state.center_total_pages = pair.second;
+        const auto draw = make_status_bar_page_layout(state, 480);
         VERIFY(draw.visible && draw.slash_x == 240 && draw.current_right == 232 && draw.total_left == 248);
         VERIFY(std::stoul(draw.current) == pair.first && std::stoul(draw.total) == pair.second);
     }
-    state.total_pages = 1000000U;
-    VERIFY(!make_reader_status_layout(state, 480).visible && state.total_pages == 1000000U);
-    state.current_page = state.total_pages = 1000001U;
-    VERIFY(!make_reader_status_layout(state, 480).visible);
-    state.current_page = state.total_pages = 1U;
-    for (const auto app : {ui_view_id::menu, ui_view_id::file, ui_view_id::battery, ui_view_id::rtc_setting, ui_view_id::test}) {
+    state.center_total_pages = 1000000U;
+    VERIFY(!make_status_bar_page_layout(state, 480).visible &&
+           state.center_total_pages == 1000000U);
+    state.center_current_page = state.center_total_pages = 1000001U;
+    VERIFY(!make_status_bar_page_layout(state, 480).visible);
+    state.center_current_page = state.center_total_pages = 1U;
+    for (const auto app : {ui_view_id::launcher, ui_view_id::books,
+                           ui_view_id::menu, ui_view_id::file,
+                           ui_view_id::reader}) {
         state.foreground_app = app;
-        VERIFY(!make_reader_status_layout(state, 480).visible);
+        VERIFY(make_status_bar_page_layout(state, 480).visible);
     }
-    std::puts("PASS status: invalid/other apps hidden, 1/1 12/438 999999/999999, invariant slash, overflow hidden without clamping");
+    state.center_kind = status_bar_center_kind::text;
+    VERIFY(!make_status_bar_page_layout(state, 480).visible);
+    std::puts("PASS status: generic page/text context, 1/1 12/438 999999/999999, invariant slash, overflow hidden without clamping");
 }
 }  // namespace
 

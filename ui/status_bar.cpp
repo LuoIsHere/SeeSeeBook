@@ -1,5 +1,8 @@
 #include "status_bar.hpp"
 
+#include <cstdio>
+#include <cstring>
+
 #include <esp_log.h>
 #include <freertos/FreeRTOS.h>
 
@@ -90,27 +93,81 @@ status_bar_view_state ui_status_bar_get_state()
 bool ui_status_bar_set_foreground(ui_view_id app)
 {
     portENTER_CRITICAL(&state_mutex);
-    const bool changed = current_state.foreground_app != app || current_state.reader_page_valid;
+    const bool changed = current_state.foreground_app != app ||
+                         current_state.center_kind != status_bar_center_kind::none;
     current_state.foreground_app = app;
-    current_state.reader_page_valid = false;
-    current_state.current_page = current_state.total_pages = 0U;
+    current_state.center_kind = status_bar_center_kind::none;
+    std::memset(current_state.center_text, 0, sizeof(current_state.center_text));
+    current_state.center_current_page = 0U;
+    current_state.center_total_pages = 0U;
     portEXIT_CRITICAL(&state_mutex);
     return changed;
 }
 
-bool ui_status_bar_update_reader_page(bool valid, std::uint32_t current, std::uint32_t total)
+bool ui_status_bar_set_center_text(const char* text)
 {
+    char candidate[status_bar_center_text_capacity] = {};
+    if (text != nullptr) {
+        std::snprintf(candidate, sizeof(candidate), "%s", text);
+    }
+    const status_bar_center_kind kind = candidate[0] == '\0'
+                                            ? status_bar_center_kind::none
+                                            : status_bar_center_kind::text;
     portENTER_CRITICAL(&state_mutex);
-    valid = valid && current_state.foreground_app == ui_view_id::reader && current > 0U && current <= total;
-    const bool changed = current_state.reader_page_valid != valid ||
-                         (valid && (current_state.current_page != current || current_state.total_pages != total));
-    current_state.reader_page_valid = valid;
-    current_state.current_page = current;
-    current_state.total_pages = total;
+    const bool changed = current_state.center_kind != kind ||
+                         std::strncmp(
+                             current_state.center_text,
+                             candidate,
+                             sizeof(candidate)) != 0;
+    current_state.center_kind = kind;
+    std::memcpy(current_state.center_text, candidate, sizeof(candidate));
+    current_state.center_current_page = 0U;
+    current_state.center_total_pages = 0U;
+    portEXIT_CRITICAL(&state_mutex);
+    return changed;
+}
+
+bool ui_status_bar_set_page_status(
+    bool valid,
+    std::uint32_t current,
+    std::uint32_t total)
+{
+    valid = valid && current > 0U && current <= total;
+    const status_bar_center_kind kind = valid
+                                            ? status_bar_center_kind::page
+                                            : status_bar_center_kind::none;
+    portENTER_CRITICAL(&state_mutex);
+    const bool changed = current_state.center_kind != kind ||
+                         (valid &&
+                          (current_state.center_current_page != current ||
+                           current_state.center_total_pages != total));
+    current_state.center_kind = kind;
+    std::memset(current_state.center_text, 0, sizeof(current_state.center_text));
+    current_state.center_current_page = valid ? current : 0U;
+    current_state.center_total_pages = valid ? total : 0U;
     portEXIT_CRITICAL(&state_mutex);
     if (changed && valid && (current > 999999U || total > 999999U)) {
-        ESP_LOGW(log_tag, "Reader page region hidden: current=%lu total=%lu",
+        ESP_LOGW(log_tag, "page center hidden: current=%lu total=%lu",
                  static_cast<unsigned long>(current), static_cast<unsigned long>(total));
     }
     return changed;
+}
+
+bool ui_status_bar_clear_center()
+{
+    return ui_status_bar_set_center_text(nullptr);
+}
+
+bool ui_status_bar_update_reader_page(
+    bool valid,
+    std::uint32_t current,
+    std::uint32_t total)
+{
+    portENTER_CRITICAL(&state_mutex);
+    const bool reader_foreground =
+        current_state.foreground_app == ui_view_id::reader;
+    portEXIT_CRITICAL(&state_mutex);
+    return reader_foreground
+               ? ui_status_bar_set_page_status(valid, current, total)
+               : false;
 }

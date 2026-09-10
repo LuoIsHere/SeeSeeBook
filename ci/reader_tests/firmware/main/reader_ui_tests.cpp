@@ -1,6 +1,8 @@
 // Exercise the production renderer policy and Reader drawing with a RAM surface.
 // Rename the exported entry points to coexist with the App harness's frame adapter.
 #define ui_renderer_init tested_ui_renderer_init
+#define ui_render_launcher tested_ui_render_launcher
+#define ui_render_books tested_ui_render_books
 #define ui_render_menu tested_ui_render_menu
 #define ui_render_test tested_ui_render_test
 #define ui_render_rtc tested_ui_render_rtc
@@ -89,6 +91,10 @@ void paper_mono_draw_cjk_text(display_surface&, const char*, std::size_t, std::i
 }
 
 namespace paper_mono_views {
+void draw_launcher_view(display_surface&, const launcher_view_state&) {}
+void draw_books_view(display_surface&, const books_view_state&) {}
+void draw_books_content(display_surface&, const books_view_state&) {}
+void draw_books_setting_row(display_surface&, const books_view_state&, bool) {}
 void draw_menu_view(display_surface&, const menu_view_state&) {}
 void draw_menu_entry(display_surface&, const menu_view_state&, std::uint8_t, bool) {}
 void draw_test_view(display_surface&, const test_view_state&, std::uint8_t, std::int16_t) {}
@@ -131,7 +137,9 @@ void test_reader_rendering()
     for (auto& line : view.page.lines) { line = {0, 1}; }
     status_bar_view_state status{};
     status.foreground_app = ui_view_id::reader;
-    status.reader_page_valid = true; status.current_page = 19; status.total_pages = 120;
+    status.center_kind = status_bar_center_kind::page;
+    status.center_current_page = 19;
+    status.center_total_pages = 120;
     surface.fill_screen(display_color::white);
     draw_status_bar(status);
     CHECK_UI(std::any_of(labels.begin(), labels.end(), [](const label& l) {
@@ -190,8 +198,39 @@ void test_reader_rendering()
         CHECK_UI(frame->mode == (reason == ui_update_reason::view_opened ? refresh_mode::quality : refresh_mode::text));
         CHECK_UI(ui_frame_pool_release(handle));
     }
+    books_view_state books{};
+    struct books_request_case {
+        ui_update_reason reason;
+        ui_control_type control;
+        display_update_region region;
+        refresh_mode mode;
+    };
+    constexpr books_request_case books_cases[] = {
+        {ui_update_reason::view_opened, ui_control_type::none,
+         display_update_region::full, refresh_mode::quality},
+        {ui_update_reason::content_changed, ui_control_type::none,
+         display_update_region::books_content, refresh_mode::text},
+        {ui_update_reason::popup_changed, ui_control_type::none,
+         display_update_region::books_modal, refresh_mode::fastest},
+        {ui_update_reason::selection_changed,
+         ui_control_type::books_setting_toggle_txt,
+         display_update_region::books_setting_txt, refresh_mode::fastest},
+        {ui_update_reason::selection_changed,
+         ui_control_type::books_setting_toggle_epub,
+         display_update_region::books_setting_epub, refresh_mode::fastest},
+    };
+    for (const books_request_case& test : books_cases) {
+        CHECK_UI(tested_ui_render_books(books, test.reason, test.control));
+        ui_frame_handle handle{};
+        CHECK_UI(xQueueReceive(request_queue, &handle, 0) == pdTRUE);
+        const display_request* frame = nullptr;
+        CHECK_UI(ui_frame_pool_resolve(handle, frame));
+        CHECK_UI(frame->update_region == test.region);
+        CHECK_UI(frame->mode == test.mode);
+        CHECK_UI(ui_frame_pool_release(handle));
+    }
     vQueueDelete(request_queue); request_queue = nullptr; renderer_task_handle = nullptr;
     ulTaskNotifyTake(pdTRUE, 0);
     labels.clear();
-    std::puts("PASS Reader rendering: 384000-point zone coverage, 24 lines, overlay restore, unchanged status, coalescing, shared ghost debt, request regions");
+    std::puts("PASS UI rendering policy: Reader zones/overlay/debt and Books content/modal/checkbox request regions");
 }

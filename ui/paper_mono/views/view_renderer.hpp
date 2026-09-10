@@ -3,15 +3,31 @@
 #include <cstdint>
 
 #include "battery_view.hpp"
+#include "books_view.hpp"
 #include "display.hpp"
 #include "file_view.hpp"
 #include "gray4_test_view.hpp"
+#include "launcher_view.hpp"
 #include "menu_view.hpp"
 #include "reader_view.hpp"
 #include "rtc_view.hpp"
 #include "test_view.hpp"
 
 namespace paper_mono_views {
+
+void draw_launcher_view(
+    display_surface& surface,
+    const launcher_view_state& state);
+void draw_books_view(
+    display_surface& surface,
+    const books_view_state& state);
+void draw_books_content(
+    display_surface& surface,
+    const books_view_state& state);
+void draw_books_setting_row(
+    display_surface& surface,
+    const books_view_state& state,
+    bool epub);
 
 void draw_gray4_test_view(
     display_surface& surface,

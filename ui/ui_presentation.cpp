@@ -10,9 +10,9 @@ namespace {
 constexpr char log_tag[] = "ui_presentation";
 portMUX_TYPE presentation_lock = portMUX_INITIALIZER_UNLOCKED;
 std::uint32_t next_generation = 0U;
-ui_view_id expected_view = ui_view_id::menu;
+ui_view_id expected_view = ui_view_id::launcher;
 std::uint32_t expected_generation = 0U;
-ui_view_id presented_view = ui_view_id::menu;
+ui_view_id presented_view = ui_view_id::launcher;
 std::uint32_t presented_generation = 0U;
 ui_frame_handle presented_handle = invalid_ui_frame_handle();
 bool presented_rtc_controls_enabled = false;
@@ -70,7 +70,9 @@ bool acquire_presented_frame(
 ui_presentation_read_guard::ui_presentation_read_guard(ui_view_id view)
     : view_(view)
 {
-    if (view != ui_view_id::menu && view != ui_view_id::file && view != ui_view_id::reader) {
+    if (view != ui_view_id::launcher && view != ui_view_id::books &&
+        view != ui_view_id::menu && view != ui_view_id::file &&
+        view != ui_view_id::reader) {
         return;
     }
     ui_frame_handle handle = invalid_ui_frame_handle();
@@ -78,7 +80,11 @@ ui_presentation_read_guard::ui_presentation_read_guard(ui_view_id view)
     if (!acquire_presented_frame(view, handle, frame) || frame == nullptr) {
         return;
     }
-    if (view == ui_view_id::menu) {
+    if (view == ui_view_id::launcher) {
+        state_ = &frame->payload.launcher;
+    } else if (view == ui_view_id::books) {
+        state_ = &frame->payload.books;
+    } else if (view == ui_view_id::menu) {
         state_ = &frame->payload.menu;
     } else if (view == ui_view_id::file) {
         state_ = &frame->payload.file;
@@ -87,6 +93,20 @@ ui_presentation_read_guard::ui_presentation_read_guard(ui_view_id view)
     }
     generation_ = handle.generation;
     index_ = handle.index;
+}
+
+const launcher_view_state* ui_presentation_read_guard::launcher_view() const
+{
+    return valid() && view_ == ui_view_id::launcher
+               ? static_cast<const launcher_view_state*>(state_)
+               : nullptr;
+}
+
+const books_view_state* ui_presentation_read_guard::books_view() const
+{
+    return valid() && view_ == ui_view_id::books
+               ? static_cast<const books_view_state*>(state_)
+               : nullptr;
 }
 
 ui_presentation_read_guard::~ui_presentation_read_guard()

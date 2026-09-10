@@ -6,7 +6,7 @@
 #include "app_base.hpp"
 
 struct app_record {
-    app_kind kind = app_kind::menu;
+    app_kind kind = app_kind::launcher;
     int mooncake_id = -1;
     app_base* instance = nullptr;
 };

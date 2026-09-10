@@ -20,8 +20,14 @@
 #include "app.hpp"
 #include "app_registry.hpp"
 #include "app_descriptor.hpp"
+#include "books_app.hpp"
+#include "books_layout.hpp"
 #include "file_app.hpp"
 #include "file_name.hpp"
+#include "launcher_app.hpp"
+#include "launcher_layout.hpp"
+#include "menu_app.hpp"
+#include "menu_layout.hpp"
 #include "reader_app.hpp"
 #include "text_paginator.hpp"
 #include "book_service.hpp"
@@ -39,6 +45,7 @@ void test_book_formats_and_engine();
 void test_epub_support();
 void test_reader_rendering();
 void test_gray4_support();
+void test_books_ui_support();
 std::string make_epub_fixture(bool cover, char filler);
 
 #define CHECK(condition) do { if (!(condition)) { \
@@ -65,9 +72,12 @@ bool defer_display = false;
 bool reject_reader_frames = false;
 unsigned control_feedback = 0;
 unsigned frame_submissions = 0;
-app_record test_records[3];
+app_record test_records[6];
 constexpr app_descriptor descriptors[] = {
+    {app_kind::launcher, ui_view_id::launcher, "Launcher"},
+    {app_kind::books, ui_view_id::books, "Books"},
     {app_kind::menu, ui_view_id::menu, "Menu"},
+    {app_kind::test, ui_view_id::test, "Test"},
     {app_kind::file, ui_view_id::file, "File"},
     {app_kind::reader, ui_view_id::reader, "Reader"},
 };
@@ -75,9 +85,22 @@ constexpr app_descriptor descriptors[] = {
 std::uint16_t measure(std::uint32_t cp) { return cp < 128U ? 1U : 2U; }
 const text_layout_profile test_layout{12U, 3U, measure};
 
-class test_menu final : public app_base {
+class test_child final : public app_base {
 public:
-    void handle_app_event(const app_event&) override {}
+    void handle_app_event(const app_event& event) override
+    {
+        if (event.type == app_event_type::ui_action &&
+            event.action.control == ui_control_type::navigate_back &&
+            event.action.input.gesture == input_gesture_type::click) {
+            app_request_back();
+        }
+    }
+
+protected:
+    void on_open() override
+    {
+        ui_render_test({}, ui_update_reason::view_opened);
+    }
 };
 
 const display_request* shown()
@@ -156,6 +179,14 @@ void wait_file(const char* path)
     until([=] { return ui_frame_handle_is_valid(visible) && shown()->view == ui_view_id::file &&
                         shown()->payload.file.status == file_view_status::ready &&
                         std::strcmp(shown()->payload.file.path, path) == 0; });
+}
+
+void wait_view(ui_view_id view)
+{
+    until([=] {
+        return ui_frame_handle_is_valid(visible) && shown()->view == view &&
+               ui_presentation_input_ready(view);
+    });
 }
 
 void click(int x, int y)
@@ -468,6 +499,76 @@ void test_names()
     std::puts("PASS filenames: capacity/width matrix, extension retention, UTF-8, guard bytes");
 }
 
+void test_app_navigation()
+{
+    wait_view(ui_view_id::launcher);
+    CHECK(shown()->payload.launcher.entry_count == 3U);
+    CHECK(std::strcmp(shown()->payload.launcher.entries[0].label, "Books") == 0);
+    CHECK(std::strcmp(shown()->payload.launcher.entries[1].label, "File") == 0);
+    CHECK(std::strcmp(shown()->payload.launcher.entries[2].label, "Menu") == 0);
+
+    const auto books_entry = launcher_entry_rect(0U);
+    click(
+        books_entry.left + books_entry.width / 2,
+        books_entry.top + books_entry.height / 2);
+    wait_view(ui_view_id::books);
+    CHECK(shown()->payload.books.page_index == 0U);
+    CHECK(shown()->payload.books.page_count == 1U);
+    CHECK(ui_status_bar_get_state().center_kind == status_bar_center_kind::page);
+    CHECK(ui_status_bar_get_state().center_current_page == 1U);
+    CHECK(ui_status_bar_get_state().center_total_pages == 1U);
+
+    const auto settings = books_settings_rect();
+    click(settings.left + settings.width / 2, settings.top + settings.height / 2);
+    CHECK(shown()->payload.books.settings_visible);
+    CHECK(shown()->payload.books.pending_settings.auto_scan_txt);
+    CHECK(!shown()->payload.books.pending_settings.auto_scan_epub);
+    const auto epub = books_setting_row_rect(true);
+    click(epub.left + 4, epub.top + 4);
+    CHECK(shown()->payload.books.pending_settings.auto_scan_epub);
+    const auto cancel = books_setting_cancel_rect();
+    click(cancel.left + 4, cancel.top + 4);
+    CHECK(!shown()->payload.books.settings_visible);
+    click(settings.left + settings.width / 2, settings.top + settings.height / 2);
+    CHECK(!shown()->payload.books.pending_settings.auto_scan_epub);
+    click(epub.left + 4, epub.top + 4);
+    const auto confirm = books_setting_confirm_rect();
+    click(confirm.left + 4, confirm.top + 4);
+    click(settings.left + settings.width / 2, settings.top + settings.height / 2);
+    CHECK(shown()->payload.books.pending_settings.auto_scan_epub);
+    click(cancel.left + 4, cancel.top + 4);
+
+    const auto back = books_back_rect();
+    click(back.left + back.width / 2, back.top + back.height / 2);
+    wait_view(ui_view_id::launcher);
+    const auto launcher_menu = launcher_entry_rect(2U);
+    click(
+        launcher_menu.left + launcher_menu.width / 2,
+        launcher_menu.top + launcher_menu.height / 2);
+    wait_view(ui_view_id::menu);
+    CHECK(shown()->payload.menu.entry_count == 4U);
+    CHECK(std::strcmp(shown()->payload.menu.entries[0].label, "Screen Setting") == 0);
+    const auto child = menu_entry_rect(0U);
+    click(child.left + child.width / 2, child.top + child.height / 2);
+    wait_view(ui_view_id::test);
+    const auto child_back = test_back_button_rect();
+    click(
+        child_back.left + child_back.width / 2,
+        child_back.top + child_back.height / 2);
+    wait_view(ui_view_id::menu);
+    const auto menu_back = menu_back_button_rect();
+    click(
+        menu_back.left + menu_back.width / 2,
+        menu_back.top + menu_back.height / 2);
+    wait_view(ui_view_id::launcher);
+    CHECK(ui_status_bar_set_center_text("Context"));
+    CHECK(ui_status_bar_get_state().center_kind == status_bar_center_kind::text);
+    CHECK(std::strcmp(ui_status_bar_get_state().center_text, "Context") == 0);
+    CHECK(ui_status_bar_clear_center());
+    CHECK(ui_status_bar_get_state().center_kind == status_bar_center_kind::none);
+    std::puts("PASS App navigation: Launcher -> Books -> back, Launcher -> Menu -> child -> back");
+}
+
 void test_reader_flow()
 {
     book.clear();
@@ -476,6 +577,7 @@ void test_reader_flow()
     CHECK(book_service_init() == ESP_OK);
     CHECK(app_init() == ESP_OK);
     pump();
+    test_app_navigation();
     set_card(true);
     app_request_switch(app_kind::file);
     wait_file("/");
@@ -521,17 +623,24 @@ void test_reader_flow()
         click(80, 360); wait_changed(offsets[i]);
         CHECK(shown()->payload.reader.page.current_page_start_offset == offsets[i - 1]);
     }
-    until([] { return ui_status_bar_get_state().reader_page_valid; });
-    CHECK(ui_status_bar_get_state().current_page == 1U);
-    CHECK(ui_status_bar_get_state().total_pages > 70U);
+    until([] {
+        return ui_status_bar_get_state().center_kind ==
+               status_bar_center_kind::page;
+    });
+    CHECK(ui_status_bar_get_state().center_current_page == 1U);
+    CHECK(ui_status_bar_get_state().center_total_pages > 70U);
     const auto status_before = ui_status_bar_get_state();
     click(240, 360);
     CHECK(shown()->payload.reader.menu_visible);
-    CHECK(ui_status_bar_get_state().current_page == status_before.current_page);
-    CHECK(ui_status_bar_get_state().total_pages == status_before.total_pages);
+    CHECK(ui_status_bar_get_state().center_current_page ==
+          status_before.center_current_page);
+    CHECK(ui_status_bar_get_state().center_total_pages ==
+          status_before.center_total_pages);
     click(240, 360);
-    CHECK(ui_status_bar_get_state().current_page == status_before.current_page);
-    CHECK(ui_status_bar_get_state().total_pages == status_before.total_pages);
+    CHECK(ui_status_bar_get_state().center_current_page ==
+          status_before.center_current_page);
+    CHECK(ui_status_bar_get_state().center_total_pages ==
+          status_before.center_total_pages);
     app_event stale_book{};
     stale_book.type = app_event_type::book;
     stale_book.book.type = book_event_type::ready;
@@ -540,7 +649,8 @@ void test_reader_flow()
     stale_book.book.index_valid = true;
     stale_book.book.page_count = 999U;
     app_dispatch_event(stale_book);
-    CHECK(ui_status_bar_get_state().total_pages == status_before.total_pages);
+    CHECK(ui_status_bar_get_state().center_total_pages ==
+          status_before.center_total_pages);
 
     // Toggle during an in-flight page: show the stable body, then accept the new
     // completed page under the same menu. No partial paginator contents escape.
@@ -575,7 +685,7 @@ void test_reader_flow()
         CHECK(guard.reader_view()->page.current_page_start_offset == old);
     }
     reader_back(); wait_file("/books");
-    CHECK(!ui_status_bar_get_state().reader_page_valid);
+    CHECK(ui_status_bar_get_state().center_kind == status_bar_center_kind::none);
     click(60, 44); pump();
     // Actual Runtime returned to Menu, so File can be opened normally again.
     app_request_switch(app_kind::file); wait_file("/");
@@ -723,12 +833,15 @@ void test_epub_reader_flow()
         wait_changed(previous);
     }
     CHECK(shown()->payload.reader.page.current_page_start_offset == 0U);
-    until([] { return ui_status_bar_get_state().reader_page_valid; });
+    until([] {
+        return ui_status_bar_get_state().center_kind ==
+               status_bar_center_kind::page;
+    });
     click(80, 360);
     until([] { return shown()->view == ui_view_id::reader &&
                       shown()->payload.reader.status == reader_view_status::ready &&
                       shown()->payload.reader.showing_cover; });
-    CHECK(!ui_status_bar_get_state().reader_page_valid);
+    CHECK(ui_status_bar_get_state().center_kind == status_bar_center_kind::none);
     reader_back(); wait_file("/");
 
     // Closing on the cover restores the cover. Closing on body page 1 restores
@@ -875,6 +988,60 @@ bool system_tick_service_register_task(TaskHandle_t handle, std::uint32_t) { mon
 std::uint32_t system_tick_now_ms() { return esp_timer_get_time() / 1000 + extra_time; }
 text_layout_profile ui_reader_text_layout() { return test_layout; }
 text_layout_profile ui_file_name_text_layout() { return {32U, 1U, measure}; }
+text_layout_profile ui_books_file_name_text_layout() { return {12U, 2U, measure}; }
+
+template<typename state_type>
+bool submit_test_view(
+    ui_view_id id,
+    ui_update_reason reason,
+    const state_type& state)
+{
+    ui_frame_handle handle = invalid_ui_frame_handle();
+    display_request* frame = nullptr;
+    if (!ui_frame_pool_acquire(handle, frame)) { return false; }
+    frame->view = id;
+    frame->view_generation = ui_presentation_prepare_frame(
+        id, reason == ui_update_reason::view_opened);
+    if constexpr (std::is_same_v<state_type, launcher_view_state>) {
+        frame->payload.launcher = state;
+    } else if constexpr (std::is_same_v<state_type, books_view_state>) {
+        frame->payload.books = state;
+    } else if constexpr (std::is_same_v<state_type, menu_view_state>) {
+        frame->payload.menu = state;
+    } else if constexpr (std::is_same_v<state_type, test_view_state>) {
+        frame->payload.test = state;
+    }
+    CHECK(ui_frame_pool_publish(handle));
+    CHECK(!ui_frame_handle_is_valid(pending) || ui_frame_pool_release(pending));
+    pending = handle;
+    ++frame_submissions;
+    return true;
+}
+
+bool ui_render_launcher(
+    const launcher_view_state& state,
+    ui_update_reason reason)
+{
+    return submit_test_view(ui_view_id::launcher, reason, state);
+}
+
+bool ui_render_books(
+    const books_view_state& state,
+    ui_update_reason reason,
+    ui_control_type)
+{
+    return submit_test_view(ui_view_id::books, reason, state);
+}
+
+bool ui_render_menu(const menu_view_state& state, ui_update_reason reason)
+{
+    return submit_test_view(ui_view_id::menu, reason, state);
+}
+
+bool ui_render_test(const test_view_state& state, ui_update_reason reason)
+{
+    return submit_test_view(ui_view_id::test, reason, state);
+}
 
 template<typename writer_type>
 bool submit_test_frame(ui_view_id id, ui_update_reason reason, writer_type writer, const void* context)
@@ -910,9 +1077,14 @@ app_record* app_registry_find(app_kind kind)
 }
 bool app_registry_install_all(mooncake::Mooncake& runtime)
 {
-    std::unique_ptr<app_base> apps[3];
-    apps[0] = std::make_unique<test_menu>(); apps[1] = std::make_unique<file_app>(); apps[2] = std::make_unique<reader_app>();
-    for (unsigned i = 0; i < 3; ++i) {
+    std::unique_ptr<app_base> apps[6];
+    apps[0] = std::make_unique<launcher_app>();
+    apps[1] = std::make_unique<books_app>();
+    apps[2] = std::make_unique<menu_app>();
+    apps[3] = std::make_unique<test_child>();
+    apps[4] = std::make_unique<file_app>();
+    apps[5] = std::make_unique<reader_app>();
+    for (unsigned i = 0; i < 6; ++i) {
         test_records[i].kind = descriptors[i].kind;
         test_records[i].instance = apps[i].get();
         test_records[i].mooncake_id = runtime.installApp(std::move(apps[i]));
@@ -928,6 +1100,7 @@ extern "C" void app_main()
     test_launch_context();
     test_reader_rendering();
     test_gray4_support();
+    test_books_ui_support();
     test_pagination(); test_names();
     test_book_formats_and_engine(); test_epub_support();
     filesystem_lock = xSemaphoreCreateMutex(); read_gate = xSemaphoreCreateBinary();

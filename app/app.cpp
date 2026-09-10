@@ -16,8 +16,8 @@ constexpr char log_tag[] = "app_runtime";
 
 mooncake::Mooncake mooncake_runtime;
 app_record* foreground_record = nullptr;
-app_kind foreground_kind = app_kind::menu;
-app_kind pending_target = app_kind::menu;
+app_kind foreground_kind = app_kind::launcher;
+app_kind pending_target = app_kind::launcher;
 std::array<app_kind, 8U> return_history = {};
 std::size_t return_depth = 0U;
 app_launch_context pending_launch = {};
@@ -72,7 +72,7 @@ esp_err_t app_init()
         ESP_LOGE(log_tag, "failed to install Mooncake apps");
         return ESP_FAIL;
     }
-    app_request_switch(app_kind::menu);
+    app_request_switch(app_kind::launcher);
     ESP_LOGI(log_tag, "Mooncake applications installed");
     return ESP_OK;
 }
@@ -97,14 +97,14 @@ void app_request_switch(app_kind target)
                  static_cast<unsigned>(target));
         return;
     }
-    if (target != app_kind::menu && foreground_record != nullptr &&
+    if (target != app_kind::launcher && foreground_record != nullptr &&
         foreground_kind != target) {
         if (return_depth == return_history.size()) {
             std::move(return_history.begin() + 1U, return_history.end(), return_history.begin());
             --return_depth;
         }
         return_history[return_depth++] = foreground_kind;
-    } else if (target == app_kind::menu) {
+    } else if (target == app_kind::launcher) {
         return_depth = 0U;
     }
     pending_launch.clear();
@@ -114,7 +114,7 @@ void app_request_switch(app_kind target)
 
 void app_request_back()
 {
-    pending_target = return_depth == 0U ? app_kind::menu : return_history[--return_depth];
+    pending_target = return_depth == 0U ? app_kind::launcher : return_history[--return_depth];
     has_pending_switch = true;
     pending_launch.clear();
 }

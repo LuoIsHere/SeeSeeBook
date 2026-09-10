@@ -4,9 +4,11 @@
 #include <type_traits>
 
 #include "battery_view.hpp"
+#include "books_view.hpp"
 #include "display.hpp"
 #include "file_view.hpp"
 #include "gray4_test_view.hpp"
+#include "launcher_view.hpp"
 #include "menu_view.hpp"
 #include "reader_view.hpp"
 #include "rtc_view.hpp"
@@ -37,11 +39,17 @@ enum class display_update_region : std::uint8_t {
     test_content,
     battery_content,
     file_content,
+    books_content,
+    books_modal,
+    books_setting_txt,
+    books_setting_epub,
     reader_content,
     reader_menu,
 };
 
 union display_view_payload {
+    launcher_view_state launcher;
+    books_view_state books;
     menu_view_state menu;
     test_view_state test;
     rtc_view_state rtc;

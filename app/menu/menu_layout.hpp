@@ -15,7 +15,6 @@ inline constexpr menu_entry_descriptor menu_entries[] = {
     {app_kind::test, "Screen Setting"},
     {app_kind::rtc_setting, "RTC Setting"},
     {app_kind::battery, "Battery"},
-    {app_kind::file, "Files"},
     {app_kind::gray4_test, "Gray4 Test"},
 };
 
@@ -52,8 +51,22 @@ constexpr bool menu_layout_labels_fit()
     return true;
 }
 
+constexpr bool menu_layout_contains(app_kind target)
+{
+    for (const menu_entry_descriptor& entry : menu_entries) {
+        if (entry.target == target) {
+            return true;
+        }
+    }
+    return false;
+}
+
 static_assert(
     menu_layout_entry_count <= menu_view_entry_capacity,
     "Menu layout exceeds menu_view_entry_capacity");
 static_assert(menu_layout_has_unique_targets(), "Menu layout contains duplicate App targets");
 static_assert(menu_layout_labels_fit(), "Menu label exceeds menu_view_label_capacity");
+static_assert(!menu_layout_contains(app_kind::launcher));
+static_assert(!menu_layout_contains(app_kind::books));
+static_assert(!menu_layout_contains(app_kind::file));
+static_assert(!menu_layout_contains(app_kind::reader));

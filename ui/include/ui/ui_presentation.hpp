@@ -3,6 +3,8 @@
 #include <cstdint>
 
 #include "file_view.hpp"
+#include "books_view.hpp"
+#include "launcher_view.hpp"
 #include "menu_view.hpp"
 #include "reader_view.hpp"
 #include "ui_action.hpp"
@@ -18,6 +20,8 @@ public:
     ui_presentation_read_guard& operator=(ui_presentation_read_guard&&) = delete;
 
     bool valid() const;
+    const launcher_view_state* launcher_view() const;
+    const books_view_state* books_view() const;
     const menu_view_state* menu_view() const;
     const file_view_state* file_view() const;
     const reader_view_state* reader_view() const;
@@ -25,7 +29,7 @@ public:
 private:
     std::uint32_t generation_ = 0U;
     std::uint8_t index_ = 0xFFU;
-    ui_view_id view_ = ui_view_id::menu;
+    ui_view_id view_ = ui_view_id::launcher;
     const void* state_ = nullptr;
 };
 

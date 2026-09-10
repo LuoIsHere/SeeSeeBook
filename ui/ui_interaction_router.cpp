@@ -2,6 +2,7 @@
 
 #include <esp_log.h>
 
+#include "books_interaction.hpp"
 #include "layout.hpp"
 #include "ui_presentation.hpp"
 #include "ui_renderer.hpp"
@@ -9,7 +10,7 @@
 namespace {
 
 constexpr char log_tag[] = "ui_interaction";
-ui_view_id active_view = ui_view_id::menu;
+ui_view_id active_view = ui_view_id::launcher;
 bool rtc_controls_enabled = false;
 ui_control_type captured_control = ui_control_type::none;
 std::uint8_t captured_index = 0U;
@@ -18,7 +19,17 @@ bool control_has_feedback(ui_control_type control)
 {
     switch (control) {
         case ui_control_type::navigate_back:
+        case ui_control_type::launcher_entry:
         case ui_control_type::menu_entry:
+        case ui_control_type::books_back:
+        case ui_control_type::books_settings:
+        case ui_control_type::books_select_item:
+        case ui_control_type::books_page_previous:
+        case ui_control_type::books_page_next:
+        case ui_control_type::books_setting_toggle_txt:
+        case ui_control_type::books_setting_toggle_epub:
+        case ui_control_type::books_setting_confirm:
+        case ui_control_type::books_setting_cancel:
         case ui_control_type::reader_previous_zone:
         case ui_control_type::reader_menu_zone:
         case ui_control_type::reader_next_zone:
@@ -43,7 +54,17 @@ bool activated_action_replaces_release_feedback(ui_control_type control)
 {
     switch (control) {
         case ui_control_type::navigate_back:
+        case ui_control_type::launcher_entry:
         case ui_control_type::menu_entry:
+        case ui_control_type::books_back:
+        case ui_control_type::books_settings:
+        case ui_control_type::books_select_item:
+        case ui_control_type::books_page_previous:
+        case ui_control_type::books_page_next:
+        case ui_control_type::books_setting_toggle_txt:
+        case ui_control_type::books_setting_toggle_epub:
+        case ui_control_type::books_setting_confirm:
+        case ui_control_type::books_setting_cancel:
         case ui_control_type::front_light:
         case ui_control_type::rtc_key:
         case ui_control_type::file_row:
@@ -64,6 +85,8 @@ bool activated_action_replaces_release_feedback(ui_control_type control)
 bool hit_test(
     std::int16_t x,
     std::int16_t y,
+    const launcher_view_state* launcher_view,
+    const books_view_state* books_view,
     const menu_view_state* menu_view,
     const file_view_state* file_view,
     const reader_view_state* reader_view,
@@ -72,9 +95,36 @@ bool hit_test(
 {
     control = ui_control_type::none;
     index = 0U;
+    if (active_view == ui_view_id::launcher) {
+        if (launcher_view == nullptr) {
+            return false;
+        }
+        const std::uint8_t count =
+            launcher_view->entry_count < launcher_view_entry_capacity
+                ? launcher_view->entry_count
+                : launcher_view_entry_capacity;
+        for (std::uint8_t entry = 0U; entry < count; ++entry) {
+            if (point_in_rect(x, y, launcher_entry_rect(entry))) {
+                control = ui_control_type::launcher_entry;
+                index = entry;
+                return true;
+            }
+        }
+        return false;
+    }
+
+    if (active_view == ui_view_id::books) {
+        return books_view != nullptr &&
+               books_hit_test(*books_view, x, y, control, index);
+    }
+
     if (active_view == ui_view_id::menu) {
         if (menu_view == nullptr) {
             return false;
+        }
+        if (point_in_rect(x, y, menu_back_button_rect())) {
+            control = ui_control_type::navigate_back;
+            return true;
         }
         for (std::uint8_t entry = 0U;
              entry < menu_view->entry_count &&
@@ -190,6 +240,9 @@ bool same_captured_control(std::int16_t x, std::int16_t y)
     switch (captured_control) {
         case ui_control_type::navigate_back:
             return point_in_rect(x, y, app_back_button_rect(active_view));
+        case ui_control_type::launcher_entry:
+            return captured_index < launcher_view_entry_capacity &&
+                   point_in_rect(x, y, launcher_entry_rect(captured_index));
         case ui_control_type::menu_entry:
             return captured_index < menu_view_entry_capacity &&
                    point_in_rect(x, y, menu_entry_rect(captured_index));
@@ -213,6 +266,17 @@ bool same_captured_control(std::int16_t x, std::int16_t y)
             return point_in_rect(x, y, file_previous_page_rect());
         case ui_control_type::file_next_page:
             return point_in_rect(x, y, file_next_page_rect());
+        case ui_control_type::books_back:
+        case ui_control_type::books_settings:
+        case ui_control_type::books_select_item:
+        case ui_control_type::books_page_previous:
+        case ui_control_type::books_page_next:
+        case ui_control_type::books_setting_toggle_txt:
+        case ui_control_type::books_setting_toggle_epub:
+        case ui_control_type::books_setting_confirm:
+        case ui_control_type::books_setting_cancel:
+            return books_control_contains(
+                captured_control, captured_index, x, y);
         case ui_control_type::reader_previous_zone:
             return point_in_rect(x, y, reader_touch_zone_rect(0U));
         case ui_control_type::reader_menu_zone:
@@ -259,7 +323,9 @@ bool ui_interaction_process(const input_event& input, ui_action_event& action)
     }
     if (input.gesture == input_gesture_type::press) {
         ui_presentation_read_guard presented(active_view);
-        const bool requires_view_state = active_view == ui_view_id::menu ||
+        const bool requires_view_state = active_view == ui_view_id::launcher ||
+                                         active_view == ui_view_id::books ||
+                                         active_view == ui_view_id::menu ||
                                          active_view == ui_view_id::file ||
                                          active_view == ui_view_id::reader;
         if (requires_view_state && !presented.valid()) {
@@ -270,6 +336,8 @@ bool ui_interaction_process(const input_event& input, ui_action_event& action)
         if (!hit_test(
                 input.start_x,
                 input.start_y,
+                presented.launcher_view(),
+                presented.books_view(),
                 presented.menu_view(),
                 presented.file_view(),
                 presented.reader_view(),
@@ -307,7 +375,8 @@ bool ui_interaction_process(const input_event& input, ui_action_event& action)
         ui_control_type current = ui_control_type::none;
         std::uint8_t current_index = 0U;
         if (!hit_test(input.end_x, input.end_y, nullptr, nullptr,
-                      presented.reader_view(), current, current_index) ||
+                      nullptr, nullptr, presented.reader_view(), current,
+                      current_index) ||
             current != control || current_index != index) {
             return false;
         }

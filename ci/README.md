@@ -2,11 +2,12 @@
 
 ## Purpose
 
-`reader_tests` is a local ESP32-S3 QEMU integration test project. It compiles the production Reader, App Runtime, storage, book, EPUB, and PaperMono UI sources with controlled storage and display adapters.
+`reader_tests` is a local ESP32-S3 QEMU integration test project. It compiles the production App Runtime, Launcher, Books skeleton, Reader, storage, book, EPUB, and PaperMono UI sources with controlled storage and display adapters.
 
 The test sources cover:
 
-- `firmware/main/test_main.cpp`: App switching and generic launch data, TXT and EPUB Reader flows, pagination integration, progress restore, cover page navigation, SD-card lifecycle, request timeout handling, file names, and frame ownership.
+- `firmware/main/test_main.cpp`: Launcher/Books/Menu back-stack navigation, App switching and generic launch data, TXT and EPUB Reader flows, pagination integration, progress restore, cover page navigation, SD-card lifecycle, request timeout handling, file names, and frame ownership.
+- `firmware/main/books_ui_tests.cpp`: first-level and secondary entry descriptors, Books three-column layout and pagination, settings transaction state, modal input capture, and two-line filename formatting.
 - `firmware/main/book_tests.cpp`: book format detection, progress records, page-index records, index construction, and stale-record rejection.
 - `firmware/main/epub_tests.cpp`: EPUB ZIP/container/OPF parsing, spine text extraction, cover extraction, cache generation, limits, and invalid or unsupported input handling.
 - `firmware/main/reader_ui_tests.cpp`: Reader view rendering, menu behavior, status rendering, cover rendering, and PaperMono frame contents.
@@ -41,11 +42,12 @@ The runner generates `firmware/build/`, `firmware/sdkconfig`, `test_build.log`, 
 
 ## 用途
 
-`reader_tests` 是在本地运行的 ESP32-S3 QEMU 集成测试工程。它编译生产代码中的 Reader、App Runtime、存储、书籍服务、EPUB 和 PaperMono UI，并用可控的存储及显示适配器替代硬件。
+`reader_tests` 是在本地运行的 ESP32-S3 QEMU 集成测试工程。它编译生产代码中的 App Runtime、Launcher、Books 骨架、Reader、存储、书籍服务、EPUB 和 PaperMono UI，并用可控的存储及显示适配器替代硬件。
 
 测试源码的职责如下：
 
-- `firmware/main/test_main.cpp`：测试 App 切换和通用启动参数、TXT/EPUB 阅读流程、分页集成、进度恢复、封面第 0 页导航、SD 卡生命周期、请求超时、文件名和帧所有权。
+- `firmware/main/test_main.cpp`：测试 Launcher/Books/Menu 返回栈、App 切换和通用启动参数、TXT/EPUB 阅读流程、分页集成、进度恢复、封面第 0 页导航、SD 卡生命周期、请求超时、文件名和帧所有权。
+- `firmware/main/books_ui_tests.cpp`：测试一级与二级入口 descriptor、Books 三列布局与分页、设置事务状态、modal 输入截获和两行文件名格式化。
 - `firmware/main/book_tests.cpp`：测试书籍格式识别、进度记录、页索引记录、索引构建和过期记录拒绝。
 - `firmware/main/epub_tests.cpp`：测试 EPUB ZIP/container/OPF 解析、spine 正文提取、封面提取、缓存生成、资源限制以及非法或不支持输入的处理。
 - `firmware/main/reader_ui_tests.cpp`：测试 Reader 视图、顶部菜单、状态显示、封面显示和 PaperMono 帧内容。

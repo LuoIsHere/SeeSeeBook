@@ -7,8 +7,11 @@
 
 #include "app_descriptor.hpp"
 #include "battery/battery_app.hpp"
+#include "books/books_app.hpp"
 #include "file/file_app.hpp"
 #include "gray4_test/gray4_test_app.hpp"
+#include "launcher/launcher_app.hpp"
+#include "launcher/launcher_layout.hpp"
 #include "menu/menu_app.hpp"
 #include "menu/menu_layout.hpp"
 #include "reader/reader_app.hpp"
@@ -33,6 +36,9 @@ std::unique_ptr<app_base> create_app()
 }
 
 constexpr app_registration registrations[] = {
+    {{app_kind::launcher, ui_view_id::launcher, "LauncherApp"},
+     &create_app<launcher_app>},
+    {{app_kind::books, ui_view_id::books, "BooksApp"}, &create_app<books_app>},
     {{app_kind::menu, ui_view_id::menu, "MenuApp"}, &create_app<menu_app>},
     {{app_kind::test, ui_view_id::test, "TestApp"}, &create_app<test_app>},
     {{app_kind::rtc_setting, ui_view_id::rtc_setting, "RTCSettingApp"},
@@ -47,13 +53,14 @@ constexpr app_registration registrations[] = {
 
 std::array<app_record, std::size(registrations)> records = {};
 
-bool menu_layout_is_valid()
+template <typename entry_type, std::size_t count>
+bool entry_targets_are_registered(const entry_type (&entries)[count])
 {
-    for (const menu_entry_descriptor& entry : menu_entries) {
+    for (const entry_type& entry : entries) {
         if (app_descriptor_find(entry.target) == nullptr) {
             ESP_LOGE(
                 log_tag,
-                "menu target is not registered kind=%u",
+                "configured target is not registered kind=%u",
                 static_cast<unsigned>(entry.target));
             return false;
         }
@@ -80,7 +87,8 @@ const app_descriptor* app_descriptor_find(app_kind kind)
 
 bool app_registry_install_all(mooncake::Mooncake& runtime)
 {
-    if (!menu_layout_is_valid()) {
+    if (!entry_targets_are_registered(launcher_entries) ||
+        !entry_targets_are_registered(menu_entries)) {
         return false;
     }
     for (std::size_t index = 0U; index < std::size(registrations); ++index) {

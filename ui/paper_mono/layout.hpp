@@ -5,6 +5,7 @@
 #include "display.hpp"
 #include "file_view.hpp"
 #include "geometry.hpp"
+#include "launcher_view.hpp"
 #include "renderer_internal.hpp"
 #include "rtc_view.hpp"
 
@@ -17,6 +18,15 @@
 #define MENU_ENTRY_TOP 190
 #define MENU_ENTRY_HEIGHT 96
 #define MENU_ENTRY_TEXT_SIZE 3U
+
+#define LAUNCHER_TITLE_CENTER_Y 112
+#define LAUNCHER_TITLE_TEXT_SIZE 4U
+#define LAUNCHER_ENTRY_LEFT 36
+#define LAUNCHER_ENTRY_TOP 238
+#define LAUNCHER_ENTRY_WIDTH (UI_DISPLAY_WIDTH - LAUNCHER_ENTRY_LEFT * 2)
+#define LAUNCHER_ENTRY_HEIGHT 112
+#define LAUNCHER_ENTRY_GAP 32
+#define LAUNCHER_ENTRY_TEXT_SIZE 3U
 
 static_assert(menu_view_entry_capacity == 5U);
 
@@ -174,6 +184,28 @@ constexpr display_rect menu_entry_rect(std::uint8_t index)
     };
 }
 
+constexpr display_rect launcher_entry_rect(std::uint8_t index)
+{
+    return {
+        LAUNCHER_ENTRY_LEFT,
+        static_cast<std::int16_t>(
+            LAUNCHER_ENTRY_TOP + index *
+                (LAUNCHER_ENTRY_HEIGHT + LAUNCHER_ENTRY_GAP)),
+        LAUNCHER_ENTRY_WIDTH,
+        LAUNCHER_ENTRY_HEIGHT,
+    };
+}
+
+constexpr display_rect menu_back_button_rect()
+{
+    return {
+        RTC_BACK_BUTTON_LEFT,
+        RTC_BACK_BUTTON_TOP,
+        APP_BACK_BUTTON_WIDTH,
+        APP_BACK_BUTTON_HEIGHT,
+    };
+}
+
 constexpr display_rect rtc_back_button_rect()
 {
     return {
@@ -217,6 +249,11 @@ constexpr display_rect file_back_button_rect()
 constexpr display_rect app_back_button_rect(ui_view_id view)
 {
     switch (view) {
+        case ui_view_id::launcher:
+        case ui_view_id::books:
+            return {0, 0, 0, 0};
+        case ui_view_id::menu:
+            return menu_back_button_rect();
         case ui_view_id::test:
             return test_back_button_rect();
         case ui_view_id::rtc_setting:
@@ -229,8 +266,6 @@ constexpr display_rect app_back_button_rect(ui_view_id view)
             return reader_menu_item_rect(0U);
         case ui_view_id::gray4_test:
             return rtc_back_button_rect();
-        case ui_view_id::menu:
-            return {0, 0, 0, 0};
     }
     return {0, 0, 0, 0};
 }

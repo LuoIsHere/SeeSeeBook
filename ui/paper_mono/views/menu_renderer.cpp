@@ -48,7 +48,8 @@ void draw_menu_view(
     display_surface& surface,
     const menu_view_state& state)
 {
-    draw_centered_line(surface, PROJECT_NAME, MENU_TITLE_CENTER_Y, MENU_TITLE_TEXT_SIZE);
+    draw_back_button(surface, ui_view_id::menu, false);
+    draw_centered_line(surface, "Menu", MENU_TITLE_CENTER_Y, MENU_TITLE_TEXT_SIZE);
     const std::size_t entry_count = std::min<std::size_t>(
         state.entry_count,
         menu_view_entry_capacity);

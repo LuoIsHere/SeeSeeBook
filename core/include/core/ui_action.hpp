@@ -6,6 +6,8 @@
 #include "input_event.hpp"
 
 enum class ui_view_id : std::uint8_t {
+    launcher,
+    books,
     menu,
     test,
     rtc_setting,
@@ -18,7 +20,17 @@ enum class ui_view_id : std::uint8_t {
 enum class ui_control_type : std::uint8_t {
     none,
     navigate_back,
+    launcher_entry,
     menu_entry,
+    books_back,
+    books_settings,
+    books_select_item,
+    books_page_previous,
+    books_page_next,
+    books_setting_toggle_txt,
+    books_setting_toggle_epub,
+    books_setting_confirm,
+    books_setting_cancel,
     front_light,
     rtc_key,
     rtc_field,

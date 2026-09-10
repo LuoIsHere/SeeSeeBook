@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <cstring>
 
 #include <esp_log.h>
 #include <esp_timer.h>
@@ -10,10 +11,11 @@
 #include <freertos/task.h>
 
 #include "display.hpp"
+#include "books_layout.hpp"
 #include "layout.hpp"
 #include "renderer_internal.hpp"
 #include "status_bar.hpp"
-#include "reader_status_layout.hpp"
+#include "status_bar_layout.hpp"
 #include "ui_frame_pool.hpp"
 #include "ui_presentation.hpp"
 #include "views/renderer_helpers.hpp"
@@ -44,6 +46,7 @@ struct ghost_debt {
     region_ghost_debt test_content;
     region_ghost_debt battery_content;
     region_ghost_debt file_content;
+    region_ghost_debt books_content;
     region_ghost_debt reader_content;
     bool status_cleanup_pending = false;
 };
@@ -156,6 +159,11 @@ region_ghost_debt& debt_for_region(ghost_debt& debt, display_update_region regio
             return debt.battery_content;
         case display_update_region::file_content:
             return debt.file_content;
+        case display_update_region::books_content:
+        case display_update_region::books_modal:
+        case display_update_region::books_setting_txt:
+        case display_update_region::books_setting_epub:
+            return debt.books_content;
         case display_update_region::reader_content:
         case display_update_region::reader_menu:
             // These rectangles overlap, so menu toggles and page flips share debt.
@@ -286,10 +294,16 @@ bool status_states_equal(
         (!left.battery.level_valid || left.battery.percent == right.battery.percent) &&
         left.battery.charging_valid == right.battery.charging_valid &&
         (!left.battery.charging_valid || left.battery.charging == right.battery.charging);
-    const bool reader_equal = left.foreground_app == right.foreground_app &&
-        left.reader_page_valid == right.reader_page_valid &&
-        (!left.reader_page_valid || (left.current_page == right.current_page && left.total_pages == right.total_pages));
-    return time_equal && battery_equal && reader_equal;
+    const bool center_equal =
+        left.foreground_app == right.foreground_app &&
+        left.center_kind == right.center_kind &&
+        left.center_current_page == right.center_current_page &&
+        left.center_total_pages == right.center_total_pages &&
+        std::strncmp(
+            left.center_text,
+            right.center_text,
+            status_bar_center_text_capacity) == 0;
+    return time_equal && battery_equal && center_equal;
 }
 
 void draw_status_bar(const status_bar_view_state& state)
@@ -308,7 +322,7 @@ void draw_status_bar(const status_bar_view_state& state)
     canvas().set_text_alignment(display_text_alignment::middle_left);
     canvas().draw_text(buffer, STATUS_BAR_LEFT_MARGIN, STATUS_BAR_TOP + STATUS_BAR_HEIGHT / 2);
 
-    const auto page = make_reader_status_layout(state, UI_DISPLAY_WIDTH);
+    const auto page = make_status_bar_page_layout(state, UI_DISPLAY_WIDTH);
     if (page.visible) {
         const auto center_y = STATUS_BAR_TOP + STATUS_BAR_HEIGHT / 2;
         canvas().set_text_alignment(display_text_alignment::middle_right);
@@ -317,6 +331,13 @@ void draw_status_bar(const status_bar_view_state& state)
         canvas().draw_text("/", page.slash_x, center_y);
         canvas().set_text_alignment(display_text_alignment::middle_left);
         canvas().draw_text(page.total, page.total_left, center_y);
+    } else if (state.center_kind == status_bar_center_kind::text &&
+               state.center_text[0] != '\0') {
+        canvas().set_text_alignment(display_text_alignment::middle_center);
+        canvas().draw_text(
+            state.center_text,
+            UI_DISPLAY_WIDTH / 2,
+            STATUS_BAR_TOP + STATUS_BAR_HEIGHT / 2);
     }
 
     if (state.battery.level_valid) {
@@ -347,6 +368,13 @@ void draw_full_view(
     canvas().fill_screen(display_color::white);
     canvas().set_text_color(display_color::black, display_color::white);
     switch (request.view) {
+        case ui_view_id::launcher:
+            paper_mono_views::draw_launcher_view(
+                canvas(), request.payload.launcher);
+            break;
+        case ui_view_id::books:
+            paper_mono_views::draw_books_view(canvas(), request.payload.books);
+            break;
         case ui_view_id::menu:
             paper_mono_views::draw_menu_view(canvas(), request.payload.menu);
             break;
@@ -386,6 +414,14 @@ display_rect content_rect(display_update_region region)
                     BATTERY_CONTENT_REGION_HEIGHT};
         case display_update_region::file_content:
             return {0, FILE_CONTENT_REGION_TOP, UI_DISPLAY_WIDTH, FILE_CONTENT_REGION_HEIGHT};
+        case display_update_region::books_content:
+            return books_content_rect();
+        case display_update_region::books_modal:
+            return books_modal_rect();
+        case display_update_region::books_setting_txt:
+            return books_setting_row_rect(false);
+        case display_update_region::books_setting_epub:
+            return books_setting_row_rect(true);
         case display_update_region::reader_content:
             return reader_content_rect();
         case display_update_region::reader_menu:
@@ -426,6 +462,21 @@ void draw_partial_request(const display_request& request, display_update_region 
             break;
         case display_update_region::file_content:
             paper_mono_views::draw_file_content(canvas(), request.payload.file);
+            break;
+        case display_update_region::books_content:
+            paper_mono_views::draw_books_content(canvas(), request.payload.books);
+            break;
+        case display_update_region::books_modal:
+            // Restore covered bookshelf content before adding or removing the modal.
+            paper_mono_views::draw_books_content(canvas(), request.payload.books);
+            break;
+        case display_update_region::books_setting_txt:
+            paper_mono_views::draw_books_setting_row(
+                canvas(), request.payload.books, false);
+            break;
+        case display_update_region::books_setting_epub:
+            paper_mono_views::draw_books_setting_row(
+                canvas(), request.payload.books, true);
             break;
         case display_update_region::reader_content:
         case display_update_region::reader_menu:
@@ -484,6 +535,16 @@ display_rect draw_control(
                 canvas(), latest.payload.file, true, request.pressed);
             return file_next_page_rect();
         case ui_control_type::none:
+        case ui_control_type::launcher_entry:
+        case ui_control_type::books_back:
+        case ui_control_type::books_settings:
+        case ui_control_type::books_select_item:
+        case ui_control_type::books_page_previous:
+        case ui_control_type::books_page_next:
+        case ui_control_type::books_setting_toggle_txt:
+        case ui_control_type::books_setting_toggle_epub:
+        case ui_control_type::books_setting_confirm:
+        case ui_control_type::books_setting_cancel:
         case ui_control_type::reader_previous_zone:
         case ui_control_type::reader_menu_zone:
         case ui_control_type::reader_next_zone:
@@ -877,6 +938,53 @@ esp_err_t ui_renderer_init()
         static_cast<unsigned>(sizeof(display_request)),
         UI_FRAME_POOL_CAPACITY);
     return ESP_OK;
+}
+
+bool ui_render_launcher(
+    const launcher_view_state& state,
+    ui_update_reason reason)
+{
+    ui_frame_handle handle = invalid_ui_frame_handle();
+    display_request* request = nullptr;
+    if (!acquire_request(ui_view_id::launcher, reason, handle, request) ||
+        request == nullptr) {
+        return false;
+    }
+    request->payload.launcher = state;
+    return submit_request(handle, *request);
+}
+
+bool ui_render_books(
+    const books_view_state& state,
+    ui_update_reason reason,
+    ui_control_type changed_control)
+{
+    ui_frame_handle handle = invalid_ui_frame_handle();
+    display_request* request = nullptr;
+    if (!acquire_request(ui_view_id::books, reason, handle, request) ||
+        request == nullptr) {
+        return false;
+    }
+    request->payload.books = state;
+    if (reason != ui_update_reason::view_opened &&
+        request->mode != refresh_mode::quality) {
+        request->mode = reason == ui_update_reason::content_changed
+                            ? refresh_mode::text
+                            : refresh_mode::fastest;
+        request->update_region = display_update_region::books_content;
+        if (reason == ui_update_reason::popup_changed) {
+            request->update_region = display_update_region::books_modal;
+        } else if (reason == ui_update_reason::selection_changed &&
+                   changed_control ==
+                       ui_control_type::books_setting_toggle_txt) {
+            request->update_region = display_update_region::books_setting_txt;
+        } else if (reason == ui_update_reason::selection_changed &&
+                   changed_control ==
+                       ui_control_type::books_setting_toggle_epub) {
+            request->update_region = display_update_region::books_setting_epub;
+        }
+    }
+    return submit_request(handle, *request);
 }
 
 bool ui_render_menu(const menu_view_state& state, ui_update_reason reason)

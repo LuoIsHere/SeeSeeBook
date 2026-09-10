@@ -8,6 +8,8 @@
 #include "app_launch_context.hpp"
 
 enum class app_kind : std::uint8_t {
+    launcher,
+    books,
     menu,
     test,
     rtc_setting,

@@ -15,8 +15,14 @@ constexpr char log_tag[] = "app_menu";
 void menu_app::handle_app_event(const app_event& event)
 {
     if (event.type != app_event_type::ui_action ||
-        event.action.control != ui_control_type::menu_entry ||
         event.action.input.gesture != input_gesture_type::click) {
+        return;
+    }
+    if (event.action.control == ui_control_type::navigate_back) {
+        app_request_back();
+        return;
+    }
+    if (event.action.control != ui_control_type::menu_entry) {
         return;
     }
     const std::uint8_t index = event.action.index;

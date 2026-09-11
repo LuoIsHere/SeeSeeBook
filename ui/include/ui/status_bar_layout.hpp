@@ -23,8 +23,9 @@ inline status_bar_page_layout make_status_bar_page_layout(
     result.current_right = result.slash_x - 8;
     result.total_left = result.slash_x + 8;
     result.visible = state.center_kind == status_bar_center_kind::page &&
-                     state.center_current_page >= 1U &&
-                     state.center_current_page <= state.center_total_pages &&
+                     ((state.center_current_page == 0U && state.center_total_pages == 0U) ||
+                      (state.center_current_page >= 1U &&
+                       state.center_current_page <= state.center_total_pages)) &&
                      state.center_current_page <= 999999U &&
                      state.center_total_pages <= 999999U;
     if (result.visible) {

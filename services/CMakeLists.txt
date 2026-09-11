@@ -7,6 +7,8 @@ idf_component_register(
         "storage/storage_service.cpp"
         "storage/storage_file_reader.cpp"
         "book/book_service.cpp"
+        "book/book_catalog_service.cpp"
+        "book/book_catalog_support.cpp"
         "book/book_format.cpp"
         "book/book_index_engine.cpp"
         "book/epub_archive.cpp"

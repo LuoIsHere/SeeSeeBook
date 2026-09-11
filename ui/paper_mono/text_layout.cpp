@@ -50,6 +50,15 @@ text_layout_profile ui_books_file_name_text_layout()
     };
 }
 
+text_layout_profile ui_books_preview_text_layout()
+{
+    return {
+        static_cast<std::uint16_t>(BOOKS_COVER_WIDTH - 12),
+        static_cast<std::uint16_t>(books_preview_line_count),
+        glyph_width,
+    };
+}
+
 void paper_mono_draw_cjk_text(
     display_surface& surface, const char* text, std::size_t length,
     std::int16_t x, std::int16_t center_y)

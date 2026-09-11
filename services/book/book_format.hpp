@@ -34,6 +34,7 @@ struct book_sample_window {
 enum class book_cache_decision { rebuild, reuse, fingerprint };
 
 bool book_canonical_path(const char* source, char* destination, std::size_t capacity);
+bool book_make_id(const char* canonical_path, char output[65]);
 bool book_metadata_decode(const char* json, std::size_t length, book_metadata& output);
 bool book_metadata_encode(const book_metadata& value, char* json, std::size_t capacity);
 std::uint32_t book_crc32(const void* data, std::size_t length, std::uint32_t previous = 0U);

@@ -9,15 +9,28 @@
 inline constexpr std::size_t books_view_item_capacity = 6U;
 inline constexpr std::size_t books_file_name_line_count = 2U;
 inline constexpr std::size_t books_file_name_line_capacity = 40U;
+inline constexpr std::size_t books_preview_line_count = 6U;
+inline constexpr std::size_t books_preview_line_capacity = 40U;
 
 struct books_file_name_view_state {
     char lines[books_file_name_line_count][books_file_name_line_capacity];
     std::uint8_t line_count;
 };
 
+enum class books_preview_view_state : std::uint8_t {
+    none,
+    ready,
+    invalid_utf8,
+    unavailable,
+};
+
 struct books_item_view_state {
     books_file_name_view_state file_name;
+    char preview[books_preview_line_count][books_preview_line_capacity];
+    std::uint32_t cover_generation;
     book_file_format format;
+    std::uint8_t preview_line_count;
+    books_preview_view_state preview_state;
     bool occupied;
     bool enabled;
 };
@@ -34,6 +47,8 @@ struct books_view_state {
     std::uint16_t page_count;
     std::uint8_t item_count;
     bool settings_visible;
+    bool catalog_busy;
+    bool catalog_error;
 };
 
 static_assert(std::is_trivially_copyable_v<books_view_state>);

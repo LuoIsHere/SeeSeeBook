@@ -132,7 +132,8 @@ bool ui_status_bar_set_page_status(
     std::uint32_t current,
     std::uint32_t total)
 {
-    valid = valid && current > 0U && current <= total;
+    valid = valid && ((current == 0U && total == 0U) ||
+                      (current > 0U && current <= total));
     const status_bar_center_kind kind = valid
                                             ? status_bar_center_kind::page
                                             : status_bar_center_kind::none;

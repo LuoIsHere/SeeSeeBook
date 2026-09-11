@@ -11,7 +11,6 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>
 #include <freertos/task.h>
-#include <mbedtls/sha256.h>
 
 #include "book_index_engine.hpp"
 #include "epub_cache_engine.hpp"
@@ -165,21 +164,6 @@ void publish_result(result_handle handle)
     }
 }
 
-bool make_book_id(const char* path, char* output)
-{
-    unsigned char digest[32] = {};
-    if (mbedtls_sha256(reinterpret_cast<const unsigned char*>(path), std::strlen(path), digest, 0) != 0) {
-        return false;
-    }
-    constexpr char digits[] = "0123456789abcdef";
-    for (std::size_t i = 0U; i < sizeof(digest); ++i) {
-        output[2U * i] = digits[digest[i] >> 4U];
-        output[2U * i + 1U] = digits[digest[i] & 15U];
-    }
-    output[64] = '\0';
-    return true;
-}
-
 void emit_open_error(const command& request, esp_err_t error)
 {
     book_service_event event = {};
@@ -209,7 +193,7 @@ void open_book(const command& request)
     active_generation = request.generation;
     active_layout = request.layout;
     epub_index_started = false;
-    if (!make_book_id(request.path, active_book_id)) { emit_open_error(request, ESP_FAIL); return; }
+    if (!book_make_id(request.path, active_book_id)) { emit_open_error(request, ESP_FAIL); return; }
     if (request.format == book_file_format::txt) {
         engine.open(request.path, active_book_id, request.layout, request.session, request.generation);
         return;

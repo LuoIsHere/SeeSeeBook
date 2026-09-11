@@ -6,3 +6,4 @@
 text_layout_profile ui_reader_text_layout();
 text_layout_profile ui_file_name_text_layout();
 text_layout_profile ui_books_file_name_text_layout();
+text_layout_profile ui_books_preview_text_layout();

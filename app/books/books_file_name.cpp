@@ -1,6 +1,7 @@
 #include "books_file_name.hpp"
 
 #include <algorithm>
+#include <cctype>
 #include <cstring>
 
 #include "file_name.hpp"
@@ -20,6 +21,27 @@ bool valid_utf8(std::string_view text)
         offset += length;
     }
     return true;
+}
+
+bool ascii_suffix(std::string_view text, std::string_view suffix)
+{
+    if (text.size() <= suffix.size()) { return false; }
+    const std::size_t offset = text.size() - suffix.size();
+    for (std::size_t index = 0U; index < suffix.size(); ++index) {
+        const auto left = static_cast<unsigned char>(text[offset + index]);
+        const auto right = static_cast<unsigned char>(suffix[index]);
+        if (std::tolower(left) != std::tolower(right)) { return false; }
+    }
+    return true;
+}
+
+std::string_view display_basename(std::string_view path)
+{
+    const auto slash = path.find_last_of('/');
+    std::string_view name = slash == std::string_view::npos ? path : path.substr(slash + 1U);
+    if (ascii_suffix(name, ".txt")) { name.remove_suffix(4U); }
+    else if (ascii_suffix(name, ".epub")) { name.remove_suffix(5U); }
+    return name;
 }
 
 std::size_t first_line_length(
@@ -57,6 +79,7 @@ void format_books_file_name(
     const text_layout_profile& layout)
 {
     output = {};
+    name = display_basename(name);
     if (layout.glyph_width == nullptr || layout.line_count == 0U || name.empty()) {
         return;
     }
@@ -82,5 +105,42 @@ void format_books_file_name(
         sizeof(output.lines[1]), second_layout);
     if (output.lines[1][0] != '\0') {
         output.line_count = 2U;
+    }
+}
+
+void format_books_preview(
+    std::string_view text,
+    books_item_view_state& output,
+    const text_layout_profile& layout)
+{
+    output.preview_line_count = 0U;
+    std::memset(output.preview, 0, sizeof(output.preview));
+    if (layout.glyph_width == nullptr || layout.line_width == 0U ||
+        layout.line_count == 0U || text.empty() || !valid_utf8(text)) {
+        return;
+    }
+    const std::size_t line_limit = std::min<std::size_t>(
+        layout.line_count, books_preview_line_count);
+    std::size_t offset = 0U;
+    for (std::size_t line = 0U; line < line_limit && offset < text.size(); ++line) {
+        while (offset < text.size() && text[offset] == ' ') { ++offset; }
+        if (offset >= text.size()) { break; }
+        if (line + 1U == line_limit) {
+            text_layout_profile final_layout = layout;
+            final_layout.line_count = 1U;
+            format_file_name(text.substr(offset), false, output.preview[line],
+                             sizeof(output.preview[line]), final_layout);
+            if (output.preview[line][0] != '\0') {
+                output.preview_line_count = static_cast<std::uint8_t>(line + 1U);
+            }
+            break;
+        }
+        const std::size_t length = first_line_length(
+            text.substr(offset), sizeof(output.preview[line]), layout);
+        if (length == 0U) { break; }
+        std::memcpy(output.preview[line], text.data() + offset, length);
+        output.preview[line][length] = '\0';
+        output.preview_line_count = static_cast<std::uint8_t>(line + 1U);
+        offset += length;
     }
 }

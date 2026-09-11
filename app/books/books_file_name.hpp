@@ -10,3 +10,8 @@ void format_books_file_name(
     std::string_view name,
     books_file_name_view_state& output,
     const text_layout_profile& layout);
+
+void format_books_preview(
+    std::string_view text,
+    books_item_view_state& output,
+    const text_layout_profile& layout);

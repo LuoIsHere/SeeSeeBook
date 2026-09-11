@@ -4,6 +4,7 @@
 #include <cstring>
 
 #include "books_layout.hpp"
+#include "books_cover.hpp"
 #include "renderer_helpers.hpp"
 #include "text_layout_internal.hpp"
 
@@ -72,6 +73,38 @@ void draw_books_item(
     }
 
     const books_item_view_state& item = state.items[index];
+    bool cover_drawn = false;
+    if (item.format == book_file_format::epub && item.cover_generation != 0U) {
+        books_cover_lease lease = {};
+        const bool acquired = ui_books_cover_acquire(index, item.cover_generation, lease);
+        cover_drawn = acquired && surface.draw_image(
+            lease.data, lease.size, lease.encoding, cover);
+        if (acquired) { ui_books_cover_release(lease); }
+    } else if (item.format == book_file_format::txt && item.preview_line_count != 0U) {
+        const std::size_t lines = std::min<std::size_t>(
+            item.preview_line_count, books_preview_line_count);
+        for (std::size_t line = 0U; line < lines; ++line) {
+            const char* text = item.preview[line];
+            paper_mono_draw_cjk_text(
+                surface, text, std::strlen(text),
+                static_cast<std::int16_t>(cover.left + BOOKS_PREVIEW_MARGIN),
+                static_cast<std::int16_t>(
+                    cover.top + BOOKS_PREVIEW_MARGIN + BOOKS_PREVIEW_LINE_HEIGHT / 2 +
+                    line * BOOKS_PREVIEW_LINE_HEIGHT));
+        }
+        cover_drawn = true;
+    }
+    if (!cover_drawn) {
+        surface.set_text_color(display_color::black, display_color::white);
+        surface.set_text_alignment(display_text_alignment::middle_center);
+        surface.set_text_size(1U);
+        const char* placeholder = item.preview_state == books_preview_view_state::invalid_utf8
+                                      ? "Invalid UTF-8"
+                                      : format_label(item.format);
+        surface.draw_text(placeholder, cover.left + cover.width / 2,
+                          cover.top + cover.height / 2);
+    }
+    surface.draw_rect(cover, display_color::black);
     const char* label = format_label(item.format);
     if (label[0] != '\0') {
         const display_rect tag = books_type_label_rect(index);
@@ -188,6 +221,15 @@ void draw_books_content(
     surface.fill_rect(books_content_rect(), display_color::white);
     for (std::uint8_t index = 0U; index < books_view_item_capacity; ++index) {
         draw_books_item(surface, state, index);
+    }
+
+    if (state.item_count == 0U) {
+        draw_centered_line(
+            surface,
+            state.catalog_busy ? "Scanning books..." :
+            state.catalog_error ? "Catalog unavailable" : "No books found",
+            (BOOKS_GRID_TOP + BOOKS_PAGER_TOP) / 2,
+            2U);
     }
 
     if (state.page_index > 0U) {

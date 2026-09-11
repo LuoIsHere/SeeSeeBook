@@ -1,28 +1,33 @@
 #pragma once
 
+#include <algorithm>
 #include <cstddef>
 
+#include "book_catalog.hpp"
 #include "books_view.hpp"
 
-struct books_scan_settings {
-    bool auto_scan_txt;
-    bool auto_scan_epub;
-};
+using books_scan_settings = book_catalog_settings;
 
 constexpr bool books_scan_settings_equal(
-    const books_scan_settings& left,
-    const books_scan_settings& right)
+    const books_scan_settings& left, const books_scan_settings& right)
 {
-    return left.auto_scan_txt == right.auto_scan_txt &&
-           left.auto_scan_epub == right.auto_scan_epub;
+    return book_catalog_settings_equal(left, right);
 }
 
 constexpr std::size_t books_page_count(std::size_t item_count)
 {
     return item_count == 0U
-               ? 1U
+               ? 0U
                : (item_count + books_view_item_capacity - 1U) /
                      books_view_item_capacity;
+}
+
+constexpr std::size_t books_clamp_page(
+    std::size_t item_count,
+    std::size_t page_index)
+{
+    const std::size_t count = books_page_count(item_count);
+    return count == 0U ? 0U : std::min(page_index, count - 1U);
 }
 
 constexpr std::size_t books_page_first_item(std::size_t page_index)

@@ -31,6 +31,7 @@
 #include "reader_app.hpp"
 #include "text_paginator.hpp"
 #include "book_service.hpp"
+#include "book_catalog.hpp"
 #include "service_event_source.hpp"
 #include "storage.hpp"
 #include "storage_service.hpp"
@@ -513,10 +514,10 @@ void test_app_navigation()
         books_entry.top + books_entry.height / 2);
     wait_view(ui_view_id::books);
     CHECK(shown()->payload.books.page_index == 0U);
-    CHECK(shown()->payload.books.page_count == 1U);
+    CHECK(shown()->payload.books.page_count == 0U);
     CHECK(ui_status_bar_get_state().center_kind == status_bar_center_kind::page);
-    CHECK(ui_status_bar_get_state().center_current_page == 1U);
-    CHECK(ui_status_bar_get_state().center_total_pages == 1U);
+    CHECK(ui_status_bar_get_state().center_current_page == 0U);
+    CHECK(ui_status_bar_get_state().center_total_pages == 0U);
 
     const auto settings = books_settings_rect();
     click(settings.left + settings.width / 2, settings.top + settings.height / 2);
@@ -569,16 +570,110 @@ void test_app_navigation()
     std::puts("PASS App navigation: Launcher -> Books -> back, Launcher -> Menu -> child -> back");
 }
 
+void test_catalog_service_persistence()
+{
+    const auto generation = storage_service_get_media_generation();
+    CHECK(book_catalog_service_activate(generation));
+    book_catalog_snapshot snapshot = {};
+    until([&] {
+        return book_catalog_service_snapshot(snapshot) &&
+               snapshot.media_generation == generation &&
+               snapshot.state == book_catalog_state::ready &&
+               snapshot.item_count == 1U;
+    });
+    book_catalog_item item = {};
+    std::size_t copied = 0U;
+    CHECK(book_catalog_service_copy_page(generation, 0U, &item, 1U, copied));
+    CHECK(copied == 1U && std::strcmp(item.path, "/books/book.TXT") == 0);
+    CHECK(item.format == book_file_format::txt);
+    CHECK(item.preview_state == book_catalog_preview_state::ready);
+    CHECK(std::strlen(item.preview) < BOOK_CATALOG_PREVIEW_CAPACITY);
+    CHECK(system_files.count("/.system/books/catalog_v1.bin") == 1U);
+
+    CHECK(book_catalog_service_update_settings(generation, {false, false}));
+    until([&] {
+        return book_catalog_service_snapshot(snapshot) &&
+               snapshot.state == book_catalog_state::ready &&
+               !snapshot.settings.auto_scan_txt &&
+               !snapshot.settings.auto_scan_epub && snapshot.item_count == 0U;
+    });
+    book_catalog_service_pause();
+    until([] { return book_catalog_service_idle(); });
+
+    set_card(false);
+    set_card(true);
+    const auto reloaded_generation = storage_service_get_media_generation();
+    CHECK(reloaded_generation != generation);
+    CHECK(book_catalog_service_activate(reloaded_generation));
+    until([&] {
+        return book_catalog_service_snapshot(snapshot) &&
+               snapshot.media_generation == reloaded_generation &&
+               snapshot.state == book_catalog_state::ready &&
+               !snapshot.settings.auto_scan_txt &&
+               !snapshot.settings.auto_scan_epub && snapshot.item_count == 0U;
+    });
+    CHECK(book_catalog_service_update_settings(reloaded_generation, {true, false}));
+    until([&] {
+        return book_catalog_service_snapshot(snapshot) &&
+               snapshot.state == book_catalog_state::ready &&
+               snapshot.settings.auto_scan_txt && snapshot.item_count == 1U;
+    });
+    book_catalog_service_pause();
+    until([] { return book_catalog_service_idle(); });
+    std::puts("PASS BookCatalogService: recursive discovery fixture, bounded TXT preview, atomic catalog, settings reload, media generation");
+}
+
+void test_books_reader_return()
+{
+    app_request_switch(app_kind::books);
+    wait_view(ui_view_id::books);
+    until([] {
+        return shown()->view == ui_view_id::books &&
+               shown()->payload.books.item_count == 1U &&
+               shown()->payload.books.page_count == 1U;
+    });
+    const auto item = books_item_rect(0U);
+    click(item.left + item.width / 2, item.top + item.height / 2);
+    wait_reader(reader_view_status::ready);
+    CHECK(shown()->payload.reader.page.current_page_start_offset > 0U);
+    reader_back();
+    wait_view(ui_view_id::books);
+    CHECK(shown()->payload.books.page_index == 0U);
+    CHECK(shown()->payload.books.item_count == 1U);
+    CHECK(ui_status_bar_get_state().center_current_page == 1U);
+    CHECK(ui_status_bar_get_state().center_total_pages == 1U);
+
+    set_card(false);
+    until([] {
+        return shown()->view == ui_view_id::books &&
+               shown()->payload.books.item_count == 0U &&
+               shown()->payload.books.page_count == 0U;
+    });
+    CHECK(ui_status_bar_get_state().center_current_page == 0U);
+    CHECK(ui_status_bar_get_state().center_total_pages == 0U);
+    set_card(true);
+    until([] {
+        return shown()->view == ui_view_id::books &&
+               shown()->payload.books.item_count == 1U;
+    });
+    const auto back = books_back_rect();
+    click(back.left + back.width / 2, back.top + back.height / 2);
+    wait_file("/");
+    std::puts("PASS Books integration: scan -> Reader restore -> Books return, page preservation, SD removal/reload");
+}
+
 void test_reader_flow()
 {
     book.clear();
     for (int i = 0; i < 150; ++i) { book += "中文mixed text 0123456789\r\n"; }
     CHECK(storage_service_init() == ESP_OK);
     CHECK(book_service_init() == ESP_OK);
+    CHECK(book_catalog_service_init() == ESP_OK);
     CHECK(app_init() == ESP_OK);
     pump();
     test_app_navigation();
     set_card(true);
+    test_catalog_service_persistence();
     app_request_switch(app_kind::file);
     wait_file("/");
     click(80, 240); // root row 1: books directory
@@ -689,6 +784,7 @@ void test_reader_flow()
     click(60, 44); pump();
     // Actual Runtime returned to Menu, so File can be opened normally again.
     app_request_switch(app_kind::file); wait_file("/");
+    test_books_reader_return();
     std::puts("PASS reader lifecycle: Files launch, next/previous, 64-page history overflow, restore, return navigation, presentation ownership");
 }
 
@@ -989,6 +1085,7 @@ std::uint32_t system_tick_now_ms() { return esp_timer_get_time() / 1000 + extra_
 text_layout_profile ui_reader_text_layout() { return test_layout; }
 text_layout_profile ui_file_name_text_layout() { return {32U, 1U, measure}; }
 text_layout_profile ui_books_file_name_text_layout() { return {12U, 2U, measure}; }
+text_layout_profile ui_books_preview_text_layout() { return {10U, 6U, measure}; }
 
 template<typename state_type>
 bool submit_test_view(

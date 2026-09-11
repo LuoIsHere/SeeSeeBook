@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+
+#include <mbedtls/sha256.h>
 #include <limits>
 
 #include <cJSON.h>
@@ -118,6 +120,26 @@ bool book_canonical_path(const char* source, char* destination, std::size_t capa
     }
     destination[used] = '\0';
     return used > 1U;
+}
+
+bool book_make_id(const char* canonical_path, char output[65])
+{
+    if (canonical_path == nullptr || output == nullptr || canonical_path[0] != '/') {
+        return false;
+    }
+    unsigned char digest[32] = {};
+    if (mbedtls_sha256(
+            reinterpret_cast<const unsigned char*>(canonical_path),
+            std::strlen(canonical_path), digest, 0) != 0) {
+        return false;
+    }
+    constexpr char digits[] = "0123456789abcdef";
+    for (std::size_t index = 0U; index < sizeof(digest); ++index) {
+        output[index * 2U] = digits[digest[index] >> 4U];
+        output[index * 2U + 1U] = digits[digest[index] & 0x0fU];
+    }
+    output[64] = '\0';
+    return true;
 }
 
 bool book_metadata_decode(const char* json, std::size_t length, book_metadata& output)

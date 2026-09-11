@@ -419,7 +419,7 @@ void test_status()
     status_bar_view_state state = {};
     VERIFY(!make_status_bar_page_layout(state, 480).visible);
     state.center_kind = status_bar_center_kind::page;
-    for (const auto& pair : {std::pair<unsigned, unsigned>{1, 1}, {12, 438}, {999999, 999999}}) {
+    for (const auto& pair : {std::pair<unsigned, unsigned>{0, 0}, {1, 1}, {12, 438}, {999999, 999999}}) {
         state.center_current_page = pair.first;
         state.center_total_pages = pair.second;
         const auto draw = make_status_bar_page_layout(state, 480);
@@ -440,7 +440,7 @@ void test_status()
     }
     state.center_kind = status_bar_center_kind::text;
     VERIFY(!make_status_bar_page_layout(state, 480).visible);
-    std::puts("PASS status: generic page/text context, 1/1 12/438 999999/999999, invariant slash, overflow hidden without clamping");
+    std::puts("PASS status: generic page/text context, 0/0 1/1 12/438 999999/999999, invariant slash, overflow hidden without clamping");
 }
 }  // namespace
 

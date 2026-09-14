@@ -30,6 +30,7 @@ bool control_has_feedback(ui_control_type control)
         case ui_control_type::books_setting_toggle_epub:
         case ui_control_type::books_setting_confirm:
         case ui_control_type::books_setting_cancel:
+            return true;
         case ui_control_type::reader_previous_zone:
         case ui_control_type::reader_menu_zone:
         case ui_control_type::reader_next_zone:
@@ -300,7 +301,7 @@ bool same_captured_control(std::int16_t x, std::int16_t y)
 void ui_interaction_set_view(ui_view_id view)
 {
     if (control_has_feedback(captured_control)) {
-        ui_render_control(captured_control, captured_index, false);
+        ui_render_control(active_view, captured_control, captured_index, false);
     }
     active_view = view;
     ui_presentation_select_view(view);
@@ -346,7 +347,7 @@ bool ui_interaction_process(const input_event& input, ui_action_event& action)
             return false;
         }
         if (control_has_feedback(captured_control)) {
-            ui_render_control(captured_control, captured_index, true);
+            ui_render_control(active_view, captured_control, captured_index, true);
         }
         if (active_view == ui_view_id::reader) {
             return false; // Capture only; Reader emits one semantic action on click.
@@ -388,7 +389,7 @@ bool ui_interaction_process(const input_event& input, ui_action_event& action)
         // Activated controls are restored by the resulting App frame or view switch.
         if (control_has_feedback(control) &&
             (!activated || !activated_action_replaces_release_feedback(control))) {
-            ui_render_control(control, index, false);
+            ui_render_control(active_view, control, index, false);
         }
         captured_control = ui_control_type::none;
         if (!activated) {
@@ -400,7 +401,7 @@ bool ui_interaction_process(const input_event& input, ui_action_event& action)
 
     if (input.gesture == input_gesture_type::long_press_end) {
         if (control_has_feedback(control)) {
-            ui_render_control(control, index, false);
+            ui_render_control(active_view, control, index, false);
         }
         captured_control = ui_control_type::none;
         action = {control, index, input};

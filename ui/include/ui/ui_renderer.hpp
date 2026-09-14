@@ -68,6 +68,7 @@ bool ui_write_reader_frame(
 
 // Control feedback is driven by the UI interaction middleware, not by Apps.
 bool ui_render_control(
+    ui_view_id view,
     ui_control_type control,
     std::uint8_t index,
     bool pressed);

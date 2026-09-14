@@ -25,6 +25,36 @@ const char* format_label(book_file_format format)
     return "";
 }
 
+void draw_books_toolbar_button(
+    display_surface& surface,
+    bool settings,
+    bool pressed)
+{
+    const display_rect button = settings ? books_settings_rect() : books_back_rect();
+    const display_color background =
+        pressed ? display_color::black : display_color::white;
+    const display_color foreground =
+        pressed ? display_color::white : display_color::black;
+    surface.fill_rect(button, background);
+    surface.set_text_color(foreground, background);
+    surface.set_text_alignment(display_text_alignment::middle_center);
+    surface.set_text_size(3U);
+    if (!settings) {
+        surface.draw_text(
+            "<", button.left + button.width / 2,
+            button.top + button.height / 2);
+        return;
+    }
+    const std::int16_t cx = button.left + button.width / 2;
+    const std::int16_t cy = button.top + button.height / 2;
+    surface.draw_rect(cx - 13, cy - 13, 27, 27, foreground);
+    surface.draw_rect(cx - 5, cy - 5, 11, 11, foreground);
+    surface.draw_line(cx, cy - 20, cx, cy - 13, foreground);
+    surface.draw_line(cx, cy + 13, cx, cy + 20, foreground);
+    surface.draw_line(cx - 20, cy, cx - 13, cy, foreground);
+    surface.draw_line(cx + 13, cy, cx + 20, cy, foreground);
+}
+
 void draw_books_toolbar(display_surface& surface)
 {
     surface.fill_rect(books_toolbar_rect(), display_color::white);
@@ -33,39 +63,33 @@ void draw_books_toolbar(display_surface& surface)
         BOOKS_TOOLBAR_HEIGHT - 1,
         UI_DISPLAY_WIDTH,
         display_color::black);
+    draw_books_toolbar_button(surface, false, false);
+    draw_books_toolbar_button(surface, true, false);
     surface.set_text_color(display_color::black, display_color::white);
-    surface.set_text_alignment(display_text_alignment::middle_center);
-    surface.set_text_size(3U);
-    const display_rect back = books_back_rect();
-    surface.draw_text("<", back.left + back.width / 2, back.top + back.height / 2);
     draw_centered_line(
         surface,
         "Books",
         BOOKS_TOOLBAR_TITLE_CENTER_Y,
         BOOKS_TOOLBAR_TEXT_SIZE);
-
-    // Programmatic settings glyph; no image asset or external font is needed.
-    const display_rect button = books_settings_rect();
-    const std::int16_t cx = button.left + button.width / 2;
-    const std::int16_t cy = button.top + button.height / 2;
-    surface.draw_rect(cx - 13, cy - 13, 27, 27, display_color::black);
-    surface.draw_rect(cx - 5, cy - 5, 11, 11, display_color::black);
-    surface.draw_line(cx, cy - 20, cx, cy - 13, display_color::black);
-    surface.draw_line(cx, cy + 13, cx, cy + 20, display_color::black);
-    surface.draw_line(cx - 20, cy, cx - 13, cy, display_color::black);
-    surface.draw_line(cx + 13, cy, cx + 20, cy, display_color::black);
 }
 
 void draw_books_item(
     display_surface& surface,
     const books_view_state& state,
-    std::uint8_t index)
+    std::uint8_t index,
+    bool pressed = false)
 {
     if (index >= books_view_item_capacity) {
         return;
     }
     const display_rect cell = books_item_rect(index);
     const display_rect cover = books_cover_rect(index);
+    if (pressed && index < state.item_count && state.items[index].occupied &&
+        state.items[index].enabled) {
+        surface.fill_rect(cell, display_color::black);
+        surface.draw_rect(cell, display_color::white);
+        return;
+    }
     surface.fill_rect(cell, display_color::white);
     surface.draw_rect(cover, display_color::black);
     if (index >= state.item_count || !state.items[index].occupied) {
@@ -78,7 +102,8 @@ void draw_books_item(
         books_cover_lease lease = {};
         const bool acquired = ui_books_cover_acquire(index, item.cover_generation, lease);
         cover_drawn = acquired && surface.draw_image(
-            lease.data, lease.size, lease.encoding, cover);
+            lease.data, lease.size, lease.encoding, cover,
+            display_image_mode::mono_dither);
         if (acquired) { ui_books_cover_release(lease); }
     } else if (item.format == book_file_format::txt && item.preview_line_count != 0U) {
         const std::size_t lines = std::min<std::size_t>(
@@ -142,25 +167,30 @@ void draw_checkbox(
     display_surface& surface,
     const display_rect& row,
     bool selected,
-    const char* label)
+    const char* label,
+    bool pressed)
 {
-    surface.fill_rect(row, display_color::white);
+    const display_color background =
+        pressed ? display_color::black : display_color::white;
+    const display_color foreground =
+        pressed ? display_color::white : display_color::black;
+    surface.fill_rect(row, background);
     const display_rect box = {
         row.left,
         static_cast<std::int16_t>(row.top + (row.height - BOOKS_CHECKBOX_SIZE) / 2),
         BOOKS_CHECKBOX_SIZE,
         BOOKS_CHECKBOX_SIZE,
     };
-    surface.draw_rect(box, display_color::black);
+    surface.draw_rect(box, foreground);
     if (selected) {
         surface.fill_rect(
             box.left + 5,
             box.top + 5,
             box.width - 10,
             box.height - 10,
-            display_color::black);
+            foreground);
     }
-    surface.set_text_color(display_color::black, display_color::white);
+    surface.set_text_color(foreground, background);
     surface.set_text_alignment(display_text_alignment::middle_left);
     surface.set_text_size(BOOKS_MODAL_TEXT_SIZE);
     surface.draw_text(
@@ -172,11 +202,16 @@ void draw_checkbox(
 void draw_modal_button(
     display_surface& surface,
     const display_rect& rect,
-    const char* label)
+    const char* label,
+    bool pressed)
 {
-    surface.fill_rect(rect, display_color::white);
-    surface.draw_rect(rect, display_color::black);
-    surface.set_text_color(display_color::black, display_color::white);
+    const display_color background =
+        pressed ? display_color::black : display_color::white;
+    const display_color foreground =
+        pressed ? display_color::white : display_color::black;
+    surface.fill_rect(rect, background);
+    surface.draw_rect(rect, foreground);
+    surface.set_text_color(foreground, background);
     surface.set_text_alignment(display_text_alignment::middle_center);
     surface.set_text_size(BOOKS_MODAL_TEXT_SIZE);
     surface.draw_text(label, rect.left + rect.width / 2, rect.top + rect.height / 2);
@@ -195,8 +230,8 @@ void draw_books_modal(
         BOOKS_MODAL_TITLE_TEXT_SIZE);
     draw_books_setting_row(surface, state, false);
     draw_books_setting_row(surface, state, true);
-    draw_modal_button(surface, books_setting_confirm_rect(), "Confirm");
-    draw_modal_button(surface, books_setting_cancel_rect(), "Cancel");
+    draw_modal_button(surface, books_setting_confirm_rect(), "Confirm", false);
+    draw_modal_button(surface, books_setting_cancel_rect(), "Cancel", false);
 }
 
 }  // namespace
@@ -211,7 +246,68 @@ void draw_books_setting_row(
         books_setting_row_rect(epub),
         epub ? state.pending_settings.auto_scan_epub
              : state.pending_settings.auto_scan_txt,
-        epub ? "Auto scan EPUB" : "Auto scan TXT");
+        epub ? "Auto scan EPUB" : "Auto scan TXT",
+        false);
+}
+
+void draw_books_control(
+    display_surface& surface,
+    const books_view_state& state,
+    ui_control_type control,
+    std::uint8_t index,
+    bool pressed)
+{
+    switch (control) {
+        case ui_control_type::books_back:
+            draw_books_toolbar_button(surface, false, pressed);
+            break;
+        case ui_control_type::books_settings:
+            draw_books_toolbar_button(surface, true, pressed);
+            break;
+        case ui_control_type::books_select_item:
+            draw_books_item(surface, state, index, pressed);
+            break;
+        case ui_control_type::books_page_previous:
+        case ui_control_type::books_page_next: {
+            const bool next = control == ui_control_type::books_page_next;
+            const display_rect rect = next ? books_next_page_rect()
+                                           : books_previous_page_rect();
+            const display_color background =
+                pressed ? display_color::black : display_color::white;
+            const display_color foreground =
+                pressed ? display_color::white : display_color::black;
+            surface.fill_rect(rect, background);
+            surface.set_text_color(foreground, background);
+            surface.set_text_alignment(display_text_alignment::middle_center);
+            surface.set_text_size(BOOKS_PAGER_TEXT_SIZE);
+            surface.draw_text(next ? ">" : "<", rect.left + rect.width / 2,
+                              rect.top + rect.height / 2);
+            break;
+        }
+        case ui_control_type::books_setting_toggle_txt:
+        case ui_control_type::books_setting_toggle_epub: {
+            const bool epub =
+                control == ui_control_type::books_setting_toggle_epub;
+            draw_checkbox(
+                surface,
+                books_setting_row_rect(epub),
+                epub ? state.pending_settings.auto_scan_epub
+                     : state.pending_settings.auto_scan_txt,
+                epub ? "Auto scan EPUB" : "Auto scan TXT",
+                pressed);
+            break;
+        }
+        case ui_control_type::books_setting_confirm:
+            draw_modal_button(
+                surface, books_setting_confirm_rect(), "Confirm", pressed);
+            break;
+        case ui_control_type::books_setting_cancel:
+            draw_modal_button(
+                surface, books_setting_cancel_rect(), "Cancel", pressed);
+            break;
+        default:
+            break;
+    }
 }
 
 void draw_books_content(

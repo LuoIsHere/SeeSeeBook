@@ -12,12 +12,18 @@
 #include "reader_view.hpp"
 #include "rtc_view.hpp"
 #include "test_view.hpp"
+#include "ui_action.hpp"
 
 namespace paper_mono_views {
 
 void draw_launcher_view(
     display_surface& surface,
     const launcher_view_state& state);
+void draw_launcher_entry(
+    display_surface& surface,
+    const launcher_view_state& state,
+    std::uint8_t index,
+    bool pressed);
 void draw_books_view(
     display_surface& surface,
     const books_view_state& state);
@@ -28,6 +34,12 @@ void draw_books_setting_row(
     display_surface& surface,
     const books_view_state& state,
     bool epub);
+void draw_books_control(
+    display_surface& surface,
+    const books_view_state& state,
+    ui_control_type control,
+    std::uint8_t index,
+    bool pressed);
 
 void draw_gray4_test_view(
     display_surface& surface,

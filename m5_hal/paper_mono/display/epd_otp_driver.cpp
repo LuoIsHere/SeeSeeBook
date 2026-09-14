@@ -255,6 +255,9 @@ bool refresh_partial_otp(const gray4_framebuffer_view& frame)
         !epd_otp_transport::begin_write()) {
         return false;
     }
+    // The PaperMono OTP 0xFF sequence requires the complete next image in
+    // RAM1. Restricting this write to the dirty rectangle leaves the rest of
+    // RAM1 on an older page and produces mixed-page refreshes.
     const std::size_t bytes = write_mono_frame(command_write_ram_1, frame);
     epd_otp_transport::write_register(command_update_control_1, {0x00U});
     epd_otp_transport::write_register(command_update_control_2, {0xffU});

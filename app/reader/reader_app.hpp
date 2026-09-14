@@ -90,6 +90,7 @@ private:
     struct presentation_state {
         ui_update_reason pending_reason = ui_update_reason::view_opened;
         bool frame_pending = false;
+        bool opening = true;
     };
 
     struct reader_runtime_state {
@@ -115,9 +116,13 @@ private:
     void handle_book_result(const result_handle& handle);
     void handle_book_event(const book_service_event& event);
     bool query_index(bool by_page, std::uint32_t page = 0U);
-    void update_status_page();
+    void update_status_page(bool notify = true);
     bool check_media();
     void start_page(std::uint64_t offset, page_operation operation);
+    void start_indexed_page(
+        std::uint64_t offset,
+        page_operation operation,
+        std::uint32_t page);
     void request_chunk();
     bool request_cover();
     void start_body(std::uint64_t offset, page_operation operation);

@@ -72,6 +72,7 @@ struct display_request {
 
 struct display_control_request {
     std::uint32_t queued_at_ms;
+    ui_view_id view;
     ui_control_type control;
     refresh_mode mode;
     display_update_region update_region;

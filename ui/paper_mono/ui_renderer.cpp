@@ -143,6 +143,11 @@ const char* refresh_mode_name(refresh_mode mode)
     return "unknown";
 }
 
+bool opening_requires_quality(ui_view_id view)
+{
+    return view == ui_view_id::reader || view == ui_view_id::gray4_test;
+}
+
 region_ghost_debt& debt_for_region(ghost_debt& debt, display_update_region region)
 {
     switch (region) {
@@ -507,6 +512,11 @@ display_rect draw_control(
             paper_mono_views::draw_front_light_bar(
                 canvas(), selected_light, pressed_light);
             return {0, 0, UI_DISPLAY_WIDTH, FRONT_LIGHT_BAR_HEIGHT};
+        case ui_control_type::launcher_entry:
+            paper_mono_views::draw_launcher_entry(
+                canvas(), latest.payload.launcher, request.index,
+                request.pressed);
+            return launcher_entry_rect(request.index);
         case ui_control_type::menu_entry:
             paper_mono_views::draw_menu_entry(
                 canvas(), latest.payload.menu, request.index, request.pressed);
@@ -534,8 +544,6 @@ display_rect draw_control(
             paper_mono_views::draw_file_page_button(
                 canvas(), latest.payload.file, true, request.pressed);
             return file_next_page_rect();
-        case ui_control_type::none:
-        case ui_control_type::launcher_entry:
         case ui_control_type::books_back:
         case ui_control_type::books_settings:
         case ui_control_type::books_select_item:
@@ -545,6 +553,33 @@ display_rect draw_control(
         case ui_control_type::books_setting_toggle_epub:
         case ui_control_type::books_setting_confirm:
         case ui_control_type::books_setting_cancel:
+            paper_mono_views::draw_books_control(
+                canvas(), latest.payload.books, request.control,
+                request.index, request.pressed);
+            switch (request.control) {
+                case ui_control_type::books_back:
+                    return books_back_rect();
+                case ui_control_type::books_settings:
+                    return books_settings_rect();
+                case ui_control_type::books_select_item:
+                    return books_item_rect(request.index);
+                case ui_control_type::books_page_previous:
+                    return books_previous_page_rect();
+                case ui_control_type::books_page_next:
+                    return books_next_page_rect();
+                case ui_control_type::books_setting_toggle_txt:
+                    return books_setting_row_rect(false);
+                case ui_control_type::books_setting_toggle_epub:
+                    return books_setting_row_rect(true);
+                case ui_control_type::books_setting_confirm:
+                    return books_setting_confirm_rect();
+                case ui_control_type::books_setting_cancel:
+                    return books_setting_cancel_rect();
+                default:
+                    break;
+            }
+            break;
+        case ui_control_type::none:
         case ui_control_type::reader_previous_zone:
         case ui_control_type::reader_menu_zone:
         case ui_control_type::reader_next_zone:
@@ -585,6 +620,30 @@ bool control_replaced_by_frame(
         frame_region == display_update_region::control) {
         return true;
     }
+    const bool books_page_control =
+        control.control == ui_control_type::books_page_previous ||
+        control.control == ui_control_type::books_page_next;
+    if (books_page_control && frame.view == ui_view_id::books &&
+        frame_region == display_update_region::books_content) {
+        return true;
+    }
+    if (control.control == ui_control_type::books_setting_toggle_txt &&
+        frame.view == ui_view_id::books &&
+        frame_region == display_update_region::books_setting_txt) {
+        return true;
+    }
+    if (control.control == ui_control_type::books_setting_toggle_epub &&
+        frame.view == ui_view_id::books &&
+        frame_region == display_update_region::books_setting_epub) {
+        return true;
+    }
+    const bool books_modal_button =
+        control.control == ui_control_type::books_setting_confirm ||
+        control.control == ui_control_type::books_setting_cancel;
+    if (books_modal_button && frame.view == ui_view_id::books &&
+        frame_region == display_update_region::books_modal) {
+        return true;
+    }
     const bool file_control =
         control.control == ui_control_type::file_row ||
         control.control == ui_control_type::file_previous_page ||
@@ -593,7 +652,7 @@ bool control_replaced_by_frame(
            frame_region == display_update_region::file_content;
 }
 
-void process_control_request(
+bool process_control_request(
     const display_control_request& control,
     const display_request& latest,
     ghost_debt& debt,
@@ -604,7 +663,10 @@ void process_control_request(
     bool has_frame)
 {
     if (!has_frame) {
-        return;
+        return false;
+    }
+    if (latest.view != control.view) {
+        return false;
     }
     if (control.control == ui_control_type::front_light) {
         pressed_light = control.pressed ? control.index : no_pressed_button;
@@ -612,7 +674,7 @@ void process_control_request(
     display_rect rect =
         draw_control(control, latest, selected_light, pressed_light);
     if (rect.width <= 0 || rect.height <= 0) {
-        return;
+        return false;
     }
 
     refresh_mode mode = resolve_mode(
@@ -628,7 +690,8 @@ void process_control_request(
         status_displayed = true;
     }
     const std::uint32_t start_ms = monotonic_ms();
-    commit_refresh(debt, rect, mode, control.update_region);
+    const display_refresh_result refresh =
+        commit_refresh(debt, rect, mode, control.update_region);
     ESP_LOGI(
         log_tag,
         "stage=control_refresh control=%u pressed=%d queue_wait_ms=%lu duration_ms=%lu",
@@ -636,6 +699,7 @@ void process_control_request(
         control.pressed,
         static_cast<unsigned long>(start_ms - control.queued_at_ms),
         static_cast<unsigned long>(monotonic_ms() - start_ms));
+    return refresh.success && refresh.actual_mode == refresh_mode::quality;
 }
 
 bool release_frame(ui_frame_handle& handle, const char* owner)
@@ -693,7 +757,9 @@ bool acquire_request(
         view,
         reason == ui_update_reason::view_opened);
     request->view = view;
-    request->mode = reason == ui_update_reason::view_opened || quality_pending
+    request->mode = quality_pending ||
+                            (reason == ui_update_reason::view_opened &&
+                             opening_requires_quality(view))
                         ? refresh_mode::quality
                         : refresh_mode::fastest;
     request->update_region = reason == ui_update_reason::view_opened || quality_pending
@@ -760,6 +826,7 @@ void renderer_task(void*)
     status_bar_view_state displayed_status = {};
     bool has_frame = false;
     bool status_displayed = false;
+    bool status_refresh_deferred = false;
 
     for (;;) {
         if (ulTaskNotifyTake(
@@ -796,9 +863,25 @@ void renderer_task(void*)
 
         display_control_request controls[DISPLAY_CONTROL_QUEUE_LENGTH] = {};
         std::size_t control_count = 0U;
+        bool quality_refreshed = false;
         while (control_count < DISPLAY_CONTROL_QUEUE_LENGTH &&
                xQueueReceive(control_queue, &controls[control_count], 0) == pdTRUE) {
             ++control_count;
+        }
+        if (has_request && next != nullptr && has_frame && latest != nullptr) {
+            for (std::size_t index = 0U; index < control_count; ++index) {
+                if (!controls[index].pressed ||
+                    controls[index].view != latest->view ||
+                    !queued_not_after(
+                        controls[index].queued_at_ms, next->queued_at_ms)) {
+                    continue;
+                }
+                quality_refreshed = process_control_request(
+                    controls[index], *latest, debt, selected_light,
+                    pressed_light, displayed_status, status_displayed,
+                    has_frame) || quality_refreshed;
+                controls[index].control = ui_control_type::none;
+            }
         }
         if (has_request && next != nullptr) {
             const refresh_mode queued_mode = quality_pending
@@ -843,16 +926,21 @@ void renderer_task(void*)
                 draw_partial_request(*next, queued_region, rect);
             }
             const status_bar_view_state status = status_bar_get_state();
-            if (!status_displayed || !status_states_equal(status, displayed_status) ||
+            if (status_refresh_deferred || !status_displayed ||
+                !status_states_equal(status, displayed_status) ||
                 rect.height == UI_DISPLAY_HEIGHT) {
                 draw_status_bar(status);
                 displayed_status = status;
                 status_displayed = true;
+                status_refresh_deferred = false;
                 rect = merged_rect(rect, status_bar_rect());
             }
             const std::uint32_t refresh_start_ms = monotonic_ms();
             const display_refresh_result refresh =
                 commit_refresh(debt, rect, mode, queued_region);
+            quality_refreshed = quality_refreshed ||
+                                (refresh.success &&
+                                 refresh.actual_mode == refresh_mode::quality);
             has_frame = refresh.success;
             status_displayed = refresh.success;
             if (refresh.success) {
@@ -890,7 +978,7 @@ void renderer_task(void*)
                 continue;
             }
             if (latest != nullptr) {
-                process_control_request(
+                quality_refreshed = process_control_request(
                     controls[index],
                     *latest,
                     debt,
@@ -898,21 +986,32 @@ void renderer_task(void*)
                     pressed_light,
                     displayed_status,
                     status_displayed,
-                    has_frame);
+                    has_frame) || quality_refreshed;
             }
         }
 
         const status_bar_view_state status = status_bar_get_state();
         if (has_frame && (!status_displayed || !status_states_equal(status, displayed_status))) {
-            draw_status_bar(status);
-            const display_refresh_result refresh = commit_refresh(
-                debt,
-                status_bar_rect(),
-                refresh_mode::fastest,
-                display_update_region::status_bar);
-            if (refresh.success) {
-                displayed_status = status;
-                status_displayed = true;
+            if (quality_refreshed || canvas().has_intermediate_gray()) {
+                // A standalone monochrome status update cannot preserve the
+                // physical Gray4 image: D7 has no partial path, and rebuilding
+                // the mono baseline would replace it. A status event arriving
+                // during a quality waveform must likewise not trigger an
+                // immediate whitening refresh. Fold it into the next frame.
+                status_refresh_deferred = true;
+                ESP_LOGI(log_tag, "deferred standalone status refresh");
+            } else {
+                draw_status_bar(status);
+                const display_refresh_result refresh = commit_refresh(
+                    debt,
+                    status_bar_rect(),
+                    refresh_mode::fastest,
+                    display_update_region::status_bar);
+                if (refresh.success) {
+                    displayed_status = status;
+                    status_displayed = true;
+                    status_refresh_deferred = false;
+                }
             }
         }
         monitor_renderer_stack();
@@ -1115,13 +1214,18 @@ bool ui_write_reader_frame(
     return submit_request(handle, *request);
 }
 
-bool ui_render_control(ui_control_type control, std::uint8_t index, bool pressed)
+bool ui_render_control(
+    ui_view_id view,
+    ui_control_type control,
+    std::uint8_t index,
+    bool pressed)
 {
     if (control_queue == nullptr || renderer_task_handle == nullptr) {
         return false;
     }
     display_control_request request = {};
     request.queued_at_ms = monotonic_ms();
+    request.view = view;
     request.control = control;
     request.mode = refresh_mode::fastest;
     request.update_region = display_update_region::control;

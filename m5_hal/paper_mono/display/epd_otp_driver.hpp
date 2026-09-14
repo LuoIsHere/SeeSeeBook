@@ -44,9 +44,10 @@ bool epd_otp_driver_init(
     const std::uint8_t* white_frame,
     std::size_t frame_size);
 
-// Refreshes the native 2bpp framebuffer through an official OTP sequence. The
-// rectangle remains semantic metadata until a controller-verified regional
-// transfer sequence is available.
+// Refreshes the native 2bpp framebuffer through an official OTP sequence.
+// PaperMono's OTP 0xFF partial sequence requires a complete next frame in RAM1.
+// The rectangle remains part of the request contract for validation and logs;
+// both full modes also transfer the entire panel.
 otp_refresh_result epd_otp_driver_refresh(
     const std::uint8_t* frame,
     std::size_t frame_size,

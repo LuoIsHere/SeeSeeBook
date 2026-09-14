@@ -30,6 +30,11 @@ enum class display_text_alignment : std::uint8_t {
     middle_right,
 };
 
+enum class display_image_mode : std::uint8_t {
+    gray4,
+    mono_dither,
+};
+
 enum class display_refresh_error : std::uint8_t {
     none,
     invalid_request,
@@ -95,7 +100,8 @@ public:
     void draw_text(const char* text, std::int16_t x, std::int16_t y);
     std::int32_t text_width(const char* text) const;
     bool draw_image(const std::uint8_t* data, std::size_t length,
-                    book_cover_encoding encoding, const display_rect& rect);
+                    book_cover_encoding encoding, const display_rect& rect,
+                    display_image_mode mode = display_image_mode::gray4);
     bool set_pixel(std::int16_t x, std::int16_t y, display_gray4 color);
     bool has_intermediate_gray() const;
 };

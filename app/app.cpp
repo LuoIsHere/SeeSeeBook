@@ -55,7 +55,7 @@ void apply_pending_switch()
         mooncake_runtime.closeApp(foreground_record->mooncake_id);
     }
     ui_interaction_set_view(descriptor->view);
-    if (ui_status_bar_set_foreground(descriptor->view)) { ui_renderer_notify_status_bar(); }
+    ui_status_bar_set_foreground(descriptor->view);
     mooncake_runtime.openApp(target->mooncake_id);
     foreground_record = target;
     foreground_kind = pending_target;

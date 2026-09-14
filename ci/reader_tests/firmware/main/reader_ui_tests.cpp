@@ -21,6 +21,7 @@
 #include <vector>
 
 #include "books_cover.hpp"
+#include "reader_cover.hpp"
 
 #define CHECK_UI(condition) do { if (!(condition)) { \
     std::printf("TEST_FAILURE renderer line=%d: %s\n", __LINE__, #condition); std::fflush(stdout); \
@@ -35,6 +36,7 @@ unsigned text_scale = 1U;
 unsigned reader_lines = 0U;
 unsigned image_draws = 0U;
 display_rect last_image_rect = {};
+display_image_mode last_image_mode = display_image_mode::gray4;
 int last_line_bottom = 0;
 struct label { std::string text; int x, y; display_text_alignment align; };
 std::vector<label> labels;
@@ -87,12 +89,15 @@ void display_surface::draw_text(const char* text, std::int16_t x, std::int16_t y
 std::int32_t display_surface::text_width(const char* text) const
 { return static_cast<std::int32_t>(std::strlen(text) * 6U * text_scale); }
 bool display_surface::draw_image(const std::uint8_t*, std::size_t,
-                                 book_cover_encoding, const display_rect& rect)
+                                 book_cover_encoding, const display_rect& rect,
+                                 display_image_mode mode)
 {
     ++image_draws;
     last_image_rect = rect;
+    last_image_mode = mode;
     return true;
 }
+bool display_surface::has_intermediate_gray() const { return false; }
 display_surface& hal_display_surface() { return surface; }
 bool hal_display_init() { return true; }
 bool hal_display_sleep() { return true; }
@@ -112,6 +117,7 @@ void paper_mono_draw_cjk_text(display_surface&, const char*, std::size_t, std::i
 
 namespace paper_mono_views {
 void draw_launcher_view(display_surface&, const launcher_view_state&) {}
+void draw_launcher_entry(display_surface&, const launcher_view_state&, std::uint8_t, bool) {}
 void draw_menu_view(display_surface&, const menu_view_state&) {}
 void draw_menu_entry(display_surface&, const menu_view_state&, std::uint8_t, bool) {}
 void draw_test_view(display_surface&, const test_view_state&, std::uint8_t, std::int16_t) {}
@@ -215,6 +221,24 @@ void test_reader_rendering()
         CHECK_UI(frame->mode == (reason == ui_update_reason::view_opened ? refresh_mode::quality : refresh_mode::text));
         CHECK_UI(ui_frame_pool_release(handle));
     }
+    const std::uint8_t reader_cover[] = {
+        0xffU, 0xd8U, 0xffU, 0xc0U, 0x00U, 0x07U,
+        0x08U, 0x00U, 0x01U, 0x00U, 0x01U,
+    };
+    CHECK_UI(ui_reader_cover_begin(
+        sizeof(reader_cover), book_cover_encoding::jpeg));
+    CHECK_UI(ui_reader_cover_append(
+        0U, reader_cover, sizeof(reader_cover)));
+    view.showing_cover = true;
+    view.cover_generation = ui_reader_cover_commit();
+    image_draws = 0U;
+    last_image_mode = display_image_mode::mono_dither;
+    paper_mono_views::draw_reader_view(surface, view);
+    CHECK_UI(image_draws == 1U);
+    CHECK_UI(last_image_mode == display_image_mode::gray4);
+    ui_reader_cover_clear();
+    view.showing_cover = false;
+
     books_view_state books{};
     struct books_request_case {
         ui_update_reason reason;
@@ -224,7 +248,7 @@ void test_reader_rendering()
     };
     constexpr books_request_case books_cases[] = {
         {ui_update_reason::view_opened, ui_control_type::none,
-         display_update_region::full, refresh_mode::quality},
+         display_update_region::full, refresh_mode::fastest},
         {ui_update_reason::content_changed, ui_control_type::none,
          display_update_region::books_content, refresh_mode::text},
         {ui_update_reason::popup_changed, ui_control_type::none,
@@ -246,6 +270,42 @@ void test_reader_rendering()
         CHECK_UI(frame->mode == test.mode);
         CHECK_UI(ui_frame_pool_release(handle));
     }
+    display_control_request books_control{};
+    books_control.view = ui_view_id::books;
+    books_control.control = ui_control_type::books_page_next;
+    display_request books_frame{};
+    books_frame.view = ui_view_id::books;
+    CHECK_UI(control_replaced_by_frame(
+        books_control, books_frame, refresh_mode::text,
+        display_update_region::books_content));
+    books_control.control = ui_control_type::books_setting_confirm;
+    CHECK_UI(control_replaced_by_frame(
+        books_control, books_frame, refresh_mode::fastest,
+        display_update_region::books_modal));
+    books_control.control = ui_control_type::books_settings;
+    CHECK_UI(!control_replaced_by_frame(
+        books_control, books_frame, refresh_mode::fastest,
+        display_update_region::books_modal));
+    launcher_view_state launcher{};
+    CHECK_UI(tested_ui_render_launcher(launcher, ui_update_reason::view_opened));
+    ui_frame_handle launcher_handle{};
+    CHECK_UI(xQueueReceive(request_queue, &launcher_handle, 0) == pdTRUE);
+    const display_request* launcher_frame = nullptr;
+    CHECK_UI(ui_frame_pool_resolve(launcher_handle, launcher_frame));
+    CHECK_UI(launcher_frame->update_region == display_update_region::full);
+    CHECK_UI(launcher_frame->mode == refresh_mode::fastest);
+    CHECK_UI(ui_frame_pool_release(launcher_handle));
+
+    gray4_test_view_state gray4{};
+    CHECK_UI(tested_ui_render_gray4_test(gray4, ui_update_reason::view_opened));
+    ui_frame_handle gray4_handle{};
+    CHECK_UI(xQueueReceive(request_queue, &gray4_handle, 0) == pdTRUE);
+    const display_request* gray4_frame = nullptr;
+    CHECK_UI(ui_frame_pool_resolve(gray4_handle, gray4_frame));
+    CHECK_UI(gray4_frame->update_region == display_update_region::full);
+    CHECK_UI(gray4_frame->mode == refresh_mode::quality);
+    CHECK_UI(ui_frame_pool_release(gray4_handle));
+
     const std::uint8_t compressed_cover[] = {0xffU, 0xd8U, 0xffU, 0xd9U};
     CHECK_UI(ui_books_cover_begin(0U, sizeof(compressed_cover), book_cover_encoding::jpeg));
     CHECK_UI(ui_books_cover_append(0U, 0U, compressed_cover, sizeof(compressed_cover)));
@@ -256,8 +316,10 @@ void test_reader_rendering()
     books.items[0].format = book_file_format::epub;
     books.items[0].cover_generation = ui_books_cover_commit(0U);
     image_draws = 0U;
+    last_image_mode = display_image_mode::gray4;
     paper_mono_views::draw_books_view(surface, books);
     CHECK_UI(image_draws == 1U);
+    CHECK_UI(last_image_mode == display_image_mode::mono_dither);
     const auto expected_cover = books_cover_rect(0U);
     CHECK_UI(last_image_rect.left == expected_cover.left &&
              last_image_rect.top == expected_cover.top &&
@@ -271,8 +333,28 @@ void test_reader_rendering()
     image_draws = 0U;
     paper_mono_views::draw_books_view(surface, books);
     CHECK_UI(image_draws == 0U);
+    paper_mono_views::draw_books_control(
+        surface, books, ui_control_type::books_back, 0U, true);
+    const auto back = books_back_rect();
+    const auto pressed_pixel =
+        std::size_t(back.top + 2) * UI_DISPLAY_WIDTH + back.left + 2;
+    CHECK_UI((pixels[pressed_pixel / 8U] & (1U << (pressed_pixel % 8U))) != 0U);
+    paper_mono_views::draw_books_control(
+        surface, books, ui_control_type::books_back, 0U, false);
+    CHECK_UI((pixels[pressed_pixel / 8U] & (1U << (pressed_pixel % 8U))) == 0U);
+
+    control_queue = xQueueCreate(
+        DISPLAY_CONTROL_QUEUE_LENGTH, sizeof(display_control_request));
+    CHECK_UI(tested_ui_render_control(
+        ui_view_id::books, ui_control_type::books_back, 0U, true));
+    display_control_request control{};
+    CHECK_UI(xQueueReceive(control_queue, &control, 0) == pdTRUE);
+    CHECK_UI(control.view == ui_view_id::books &&
+             control.control == ui_control_type::books_back &&
+             control.pressed);
+    vQueueDelete(control_queue); control_queue = nullptr;
     vQueueDelete(request_queue); request_queue = nullptr; renderer_task_handle = nullptr;
     ulTaskNotifyTake(pdTRUE, 0);
     labels.clear();
-    std::puts("PASS UI rendering policy: Reader zones/overlay/debt, Books regions, EPUB image path, TXT preview path");
+    std::puts("PASS UI rendering policy: Reader quality entry, mono Books entry/covers, Gray4 diagnostic entry, control feedback");
 }

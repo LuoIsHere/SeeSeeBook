@@ -1160,7 +1160,8 @@ bool ui_write_file_frame(ui_update_reason reason, file_frame_writer writer, cons
 { return submit_test_frame(ui_view_id::file, reason, writer, context); }
 bool ui_write_reader_frame(ui_update_reason reason, reader_frame_writer writer, const void* context)
 { return submit_test_frame(ui_view_id::reader, reason, writer, context); }
-bool ui_render_control(ui_control_type, std::uint8_t, bool) { ++control_feedback; return true; }
+bool ui_render_control(ui_view_id, ui_control_type, std::uint8_t, bool)
+{ ++control_feedback; return true; }
 
 const app_descriptor* app_descriptor_find(app_kind kind)
 {

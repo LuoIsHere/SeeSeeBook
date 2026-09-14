@@ -68,3 +68,9 @@ std::uint8_t gray4_luminance(
 // 128..191 light gray, and 192..255 white.
 display_gray4 gray4_quantize(std::uint8_t luminance);
 
+// Maps 8-bit luminance to the two endpoint levels using a stable 4x4 Bayer
+// pattern. This is an explicit monochrome projection, not a Gray4 level.
+display_gray4 gray4_mono_dither(
+    std::uint8_t luminance,
+    std::uint16_t x,
+    std::uint16_t y);

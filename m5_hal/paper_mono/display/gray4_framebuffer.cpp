@@ -147,3 +147,20 @@ display_gray4 gray4_quantize(std::uint8_t luminance)
     return static_cast<display_gray4>(luminance >> 6U);
 }
 
+display_gray4 gray4_mono_dither(
+    std::uint8_t luminance,
+    std::uint16_t x,
+    std::uint16_t y)
+{
+    constexpr std::uint8_t bayer_4x4[4][4] = {
+        {0U, 8U, 2U, 10U},
+        {12U, 4U, 14U, 6U},
+        {3U, 11U, 1U, 9U},
+        {15U, 7U, 13U, 5U},
+    };
+    const std::uint16_t threshold = static_cast<std::uint16_t>(
+        bayer_4x4[y & 0x03U][x & 0x03U] * 16U + 7U);
+    return luminance > threshold
+               ? display_gray4::white
+               : display_gray4::black;
+}

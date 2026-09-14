@@ -52,11 +52,17 @@ void reader_app::on_open()
         state_.book.submitted = book_service_open(state_.session.path, layout_, state_.session.id,
                                                   state_.session.media_generation,
                                                   state_.session.format);
-        if (!state_.book.submitted) { ESP_LOGW(log_tag, "book open not queued; reading without SD progress"); }
+        if (!state_.book.submitted) {
+            ESP_LOGW(log_tag, "book open not queued; reading without SD progress");
+            if (state_.session.format == book_file_format::epub) {
+                state_.page.status = reader_view_status::storage_error;
+            }
+        }
     }
-    state_.content_request.loading_shown = true;
-    submit_frame(ui_update_reason::view_opened);
-    update_status_page();
+    if (state_.page.status != reader_view_status::loading) {
+        state_.content_request.loading_shown = true;
+        submit_frame(ui_update_reason::view_opened);
+    }
 }
 
 void reader_app::on_close()
@@ -111,16 +117,24 @@ void reader_app::on_running()
             if (state_.cover.waiting) { request_cover(); }
             else { request_chunk(); }
         }
-        if (state_.content_request.busy && !state_.content_request.loading_shown &&
+        if (state_.content_request.busy && !state_.presentation.opening &&
+            !state_.content_request.loading_shown &&
             now - state_.content_request.loading_started_ms >= loading_delay_ms) {
             state_.content_request.loading_shown = true;
             submit_frame(ui_update_reason::content_changed);
         }
     }
     if (state_.presentation.frame_pending) {
-        state_.presentation.frame_pending = !ui_write_reader_frame(state_.presentation.pending_reason, write_frame, this);
+        const bool submitted = ui_write_reader_frame(
+            state_.presentation.pending_reason, write_frame, this);
+        state_.presentation.frame_pending = !submitted;
+        if (submitted &&
+            state_.presentation.pending_reason == ui_update_reason::view_opened) {
+            state_.presentation.opening = false;
+        }
     }
-    if (state_.book.index_lookup && !state_.content_request.loading_shown &&
+    if (state_.book.index_lookup && !state_.presentation.opening &&
+        !state_.content_request.loading_shown &&
         now - state_.content_request.loading_started_ms >= loading_delay_ms) {
         state_.content_request.loading_shown = true;
         submit_frame(ui_update_reason::content_changed);
@@ -190,8 +204,11 @@ void reader_app::handle_action(const ui_action_event& action)
         state_.navigation.user_navigated = true;
         if (state_.book.index_valid && state_.book.index_position_valid && !state_.book.waiting &&
             state_.page.current_number + 1U < state_.page.total_count) {
-            state_.book.indexed_operation = page_operation::next;
-            if (query_index(true, state_.page.current_number + 1U)) { return; }
+            start_indexed_page(
+                state_.page.next_offset,
+                page_operation::next,
+                state_.page.current_number + 1U);
+            return;
         }
         start_page(state_.page.next_offset, page_operation::next);
     } else if (action.control == ui_control_type::reader_previous_zone && state_.page.current_offset == 0U &&
@@ -199,7 +216,6 @@ void reader_app::handle_action(const ui_action_event& action)
         state_.navigation.user_navigated = true;
         if (state_.cover.generation != 0U) {
             state_.cover.showing = true;
-            update_status_page();
             submit_frame(ui_update_reason::content_changed);
         } else {
             state_.cover.offset = 0U;
@@ -208,7 +224,6 @@ void reader_app::handle_action(const ui_action_event& action)
             state_.page.status = reader_view_status::loading;
             state_.content_request.loading_shown = false;
             state_.content_request.loading_started_ms = system_tick_now_ms();
-            update_status_page();
             if (!request_cover()) {
                 state_.cover.waiting = state_.cover.available = false;
                 start_body(0U, page_operation::open);
@@ -216,13 +231,23 @@ void reader_app::handle_action(const ui_action_event& action)
         }
     } else if (action.control == ui_control_type::reader_previous_zone && state_.page.current_offset > 0U) {
         state_.navigation.user_navigated = true;
-        if (state_.book.index_valid && state_.book.index_position_valid && !state_.book.waiting && state_.page.current_number > 0U) {
-            state_.book.indexed_operation = page_operation::previous;
-            if (query_index(true, state_.page.current_number - 1U)) { return; }
-        }
         std::uint64_t previous = 0U;
         if (history_.previous(previous)) {
-            start_page(previous, page_operation::previous);
+            if (state_.book.index_valid && state_.book.index_position_valid &&
+                state_.page.current_number > 0U) {
+                start_indexed_page(
+                    previous,
+                    page_operation::previous,
+                    state_.page.current_number - 1U);
+            } else {
+                start_page(previous, page_operation::previous);
+            }
+        } else if (state_.book.index_valid && state_.book.index_position_valid &&
+                   !state_.book.waiting && state_.page.current_number > 0U) {
+            state_.book.indexed_operation = page_operation::previous;
+            if (query_index(true, state_.page.current_number - 1U)) { return; }
+            state_.page.rebuild_target = state_.page.current_offset;
+            start_page(0U, page_operation::rebuild_previous);
         } else {
             state_.page.rebuild_target = state_.page.current_offset;
             start_page(0U, page_operation::rebuild_previous);
@@ -246,6 +271,18 @@ void reader_app::start_page(std::uint64_t offset, page_operation operation)
     state_.content_request.waiting = false;
     state_.content_request.loading_shown = false;
     state_.content_request.loading_started_ms = system_tick_now_ms();
+}
+
+void reader_app::start_indexed_page(
+    std::uint64_t offset,
+    page_operation operation,
+    std::uint32_t page)
+{
+    state_.book.indexed_target_offset = offset;
+    state_.book.indexed_target_page = page;
+    state_.book.indexed_target_valid = true;
+    state_.book.index_position_valid = false;
+    start_page(offset, operation);
 }
 
 void reader_app::request_chunk()
@@ -371,7 +408,6 @@ void reader_app::handle_book_result(const result_handle& handle)
                 start_body(0U, page_operation::open);
             } else {
                 state_.page.status = reader_view_status::ready;
-                update_status_page();
                 submit_frame(ui_update_reason::content_changed);
             }
         }
@@ -424,7 +460,6 @@ void reader_app::complete_page()
         state_.page.current_offset == state_.book.indexed_target_offset;
     if (state_.book.index_position_valid) { state_.page.current_number = state_.book.indexed_target_page; }
     state_.book.indexed_target_valid = false;
-    update_status_page();
     submit_frame(ui_update_reason::content_changed);
 }
 
@@ -435,7 +470,6 @@ void reader_app::fail(reader_view_status status)
     ui_reader_cover_cancel();
     state_.book.index_lookup = state_.book.waiting = state_.book.index_position_valid = false;
     state_.page.status = status;
-    update_status_page();
     submit_frame(ui_update_reason::content_changed);
 }
 
@@ -456,14 +490,21 @@ void reader_app::submit_frame(ui_update_reason reason)
         }
     }
     view_.menu_visible = state_.navigation.menu_visible;
-    if (state_.presentation.frame_pending && state_.presentation.pending_reason == ui_update_reason::view_opened) {
+    if (state_.presentation.opening ||
+        (state_.presentation.frame_pending &&
+         state_.presentation.pending_reason == ui_update_reason::view_opened)) {
         reason = ui_update_reason::view_opened;
     } else if (state_.presentation.frame_pending && state_.presentation.pending_reason == ui_update_reason::content_changed &&
                reason == ui_update_reason::popup_changed) {
         reason = ui_update_reason::content_changed;
     }
     state_.presentation.pending_reason = reason;
-    state_.presentation.frame_pending = !ui_write_reader_frame(reason, write_frame, this);
+    update_status_page(false);
+    const bool submitted = ui_write_reader_frame(reason, write_frame, this);
+    state_.presentation.frame_pending = !submitted;
+    if (submitted && reason == ui_update_reason::view_opened) {
+        state_.presentation.opening = false;
+    }
 }
 
 bool reader_app::write_frame(reader_view_state& view, const void* context)
@@ -473,12 +514,15 @@ bool reader_app::write_frame(reader_view_state& view, const void* context)
     return true;
 }
 
-void reader_app::update_status_page()
+void reader_app::update_status_page(bool notify)
 {
     const bool valid = state_.session.active && state_.book.index_valid && state_.book.index_position_valid && state_.page.position_valid &&
         !state_.cover.showing && state_.page.current_number < state_.page.total_count &&
         (state_.page.status == reader_view_status::ready || state_.page.status == reader_view_status::empty_file);
-    if (ui_status_bar_update_reader_page(valid, valid ? state_.page.current_number + 1U : 0U, valid ? state_.page.total_count : 0U)) {
+    if (ui_status_bar_update_reader_page(
+            valid,
+            valid ? state_.page.current_number + 1U : 0U,
+            valid ? state_.page.total_count : 0U) && notify) {
         ui_renderer_notify_status_bar();
     }
 }

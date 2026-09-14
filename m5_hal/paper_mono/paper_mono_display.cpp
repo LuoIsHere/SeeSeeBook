@@ -1,5 +1,7 @@
 #include "display.hpp"
 
+#include <atomic>
+
 #include <M5Unified.h>
 #include <esp_log.h>
 
@@ -15,6 +17,36 @@ display_surface surface;
 M5Canvas frame_canvas;
 gray4_framebuffer_view frame_buffer;
 bool display_initialized = false;
+std::atomic_uint8_t desired_front_light{128U};
+std::atomic_bool front_light_suspended{false};
+
+bool apply_front_light(std::uint8_t brightness)
+{
+    internal_i2c_guard bus_guard(INTERNAL_I2C_FRONT_LIGHT_TIMEOUT_MS);
+    if (!bus_guard.locked()) {
+        ESP_LOGW(log_tag, "front light update skipped; internal I2C bus busy");
+        return false;
+    }
+    M5.Display.setBrightness(brightness);
+    return true;
+}
+
+void suspend_front_light_for_full_refresh()
+{
+    front_light_suspended.store(true);
+    if (!apply_front_light(0U)) {
+        ESP_LOGW(log_tag, "front light could not be disabled before full refresh");
+    }
+}
+
+void restore_front_light_after_full_refresh()
+{
+    front_light_suspended.store(false);
+    const std::uint8_t brightness = desired_front_light.load();
+    if (!apply_front_light(brightness)) {
+        ESP_LOGW(log_tag, "front light restore failed after full refresh");
+    }
+}
 
 std::uint32_t native_color(display_color color)
 {
@@ -76,7 +108,8 @@ bool logical_to_native(std::int16_t logical_x, std::int16_t logical_y,
 }
 
 bool draw_gray4_image(const std::uint8_t* data, std::size_t length,
-                      book_cover_encoding encoding, const display_rect& rect)
+                      book_cover_encoding encoding, const display_rect& rect,
+                      display_image_mode mode)
 {
     M5Canvas grayscale_canvas;
     grayscale_canvas.setPsram(true);
@@ -111,7 +144,13 @@ bool draw_gray4_image(const std::uint8_t* data, std::size_t length,
                                    native_x, native_y) ||
                 !frame_buffer.set_pixel(
                     native_x, native_y,
-                    gray4_quantize(grayscale[std::size_t(y) * rect.width + x]))) {
+                    mode == display_image_mode::mono_dither
+                        ? gray4_mono_dither(
+                              grayscale[std::size_t(y) * rect.width + x],
+                              static_cast<std::uint16_t>(rect.left + x),
+                              static_cast<std::uint16_t>(rect.top + y))
+                        : gray4_quantize(
+                              grayscale[std::size_t(y) * rect.width + x]))) {
                 return false;
             }
         }
@@ -334,13 +373,14 @@ std::int32_t display_surface::text_width(const char* text) const
 
 bool display_surface::draw_image(const std::uint8_t* data, std::size_t length,
                                  book_cover_encoding encoding,
-                                 const display_rect& rect)
+                                 const display_rect& rect,
+                                 display_image_mode mode)
 {
     if (data == nullptr || length == 0U || length > UINT32_MAX ||
         !valid_refresh_rect(rect)) {
         return false;
     }
-    return draw_gray4_image(data, length, encoding, rect);
+    return draw_gray4_image(data, length, encoding, rect, mode);
 }
 
 bool display_surface::set_pixel(std::int16_t x, std::int16_t y,
@@ -435,6 +475,11 @@ display_refresh_result hal_display_refresh(const display_rect& rect,
             ? paper_mono::otp_refresh_rect{0U, 0U, PAPER_MONO_EPD_NATIVE_WIDTH,
                                            PAPER_MONO_EPD_NATIVE_HEIGHT}
             : native_refresh_rect(rect);
+    bool front_light_muted =
+        requested_kind != paper_mono::otp_refresh_kind::partial;
+    if (front_light_muted) {
+        suspend_front_light_for_full_refresh();
+    }
     paper_mono::otp_refresh_result driver_result =
         paper_mono::epd_otp_driver_refresh(
             static_cast<const std::uint8_t*>(frame_canvas.getBuffer()),
@@ -452,6 +497,10 @@ display_refresh_result hal_display_refresh(const display_rect& rect,
                 requested_kind == paper_mono::otp_refresh_kind::full_gray4
                     ? paper_mono::otp_refresh_kind::full_gray4
                     : paper_mono::otp_refresh_kind::full_mono;
+            if (!front_light_muted) {
+                suspend_front_light_for_full_refresh();
+                front_light_muted = true;
+            }
             ESP_LOGW(log_tag, "internal I2C recovered; retrying %s",
                      physical_refresh_name(recovery_kind));
             driver_result = paper_mono::epd_otp_driver_refresh(
@@ -459,6 +508,9 @@ display_refresh_result hal_display_refresh(const display_rect& rect,
                 frame_canvas.bufferLength(), requested_rect, recovery_kind);
             driver_duration_ms += driver_result.duration_ms;
         }
+    }
+    if (front_light_muted) {
+        restore_front_light_after_full_refresh();
     }
     result.success = driver_result.success;
     result.actual_mode = logical_refresh_mode(driver_result.actual_kind, mode);
@@ -492,11 +544,13 @@ bool hal_display_sleep()
 
 bool hal_display_set_front_light(std::uint8_t brightness)
 {
-    internal_i2c_guard bus_guard(INTERNAL_I2C_FRONT_LIGHT_TIMEOUT_MS);
-    if (!bus_guard.locked()) {
-        ESP_LOGW(log_tag, "front light update skipped; internal I2C bus busy");
-        return false;
+    desired_front_light.store(brightness);
+    if (front_light_suspended.load()) {
+        return true;
     }
-    M5.Display.setBrightness(brightness);
-    return true;
+    const bool applied = apply_front_light(brightness);
+    if (front_light_suspended.load()) {
+        return apply_front_light(0U) && applied;
+    }
+    return applied;
 }

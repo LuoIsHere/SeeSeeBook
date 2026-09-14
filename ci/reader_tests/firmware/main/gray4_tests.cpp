@@ -96,6 +96,27 @@ void test_quantization_and_luminance()
     VERIFY_GRAY4(gray4_luminance(0U, 0U, 255U) == 28U);
 }
 
+void test_mono_dither_projection()
+{
+    unsigned black_count = 0U;
+    unsigned white_count = 0U;
+    for (std::uint16_t y = 0U; y < 4U; ++y) {
+        for (std::uint16_t x = 0U; x < 4U; ++x) {
+            VERIFY_GRAY4(
+                gray4_mono_dither(0U, x, y) == display_gray4::black);
+            VERIFY_GRAY4(
+                gray4_mono_dither(255U, x, y) == display_gray4::white);
+            const display_gray4 middle = gray4_mono_dither(128U, x, y);
+            VERIFY_GRAY4(middle == display_gray4::black ||
+                         middle == display_gray4::white);
+            black_count += middle == display_gray4::black ? 1U : 0U;
+            white_count += middle == display_gray4::white ? 1U : 0U;
+        }
+    }
+    VERIFY_GRAY4(black_count == 8U);
+    VERIFY_GRAY4(white_count == 8U);
+}
+
 void test_mono_and_otp_encoding()
 {
     std::array<std::uint8_t, 2U> storage = {};
@@ -132,6 +153,7 @@ void test_gray4_support()
     test_size_and_packing();
     test_fill_detection_and_boundaries();
     test_quantization_and_luminance();
+    test_mono_dither_projection();
     test_mono_and_otp_encoding();
     std::printf("GRAY4_TESTS_PASS checks=%u\n", checks);
 }

@@ -54,7 +54,6 @@ void books_app::on_open()
     media_generation_ = storage_service_get_media_generation();
     book_catalog_service_activate(media_generation_);
     refresh_catalog(false);
-    update_status_bar();
     submit_frame(ui_update_reason::view_opened);
     start_next_cover();
     ESP_LOGI(log_tag, "BooksApp opened generation=%lu page=%u items=%u",
@@ -159,7 +158,6 @@ void books_app::handle_action(const ui_action_event& action)
             if (page_index_ > 0U) {
                 --page_index_;
                 load_page(true);
-                update_status_bar();
                 submit_frame(ui_update_reason::content_changed);
                 start_next_cover();
             }
@@ -168,7 +166,6 @@ void books_app::handle_action(const ui_action_event& action)
             if (page_index_ + 1U < page_count_) {
                 ++page_index_;
                 load_page(true);
-                update_status_bar();
                 submit_frame(ui_update_reason::content_changed);
                 start_next_cover();
             }
@@ -199,7 +196,6 @@ void books_app::handle_storage_status(const app_storage_status_event& event)
         total_items_ = page_item_count_ = page_count_ = 0U;
         std::memset(page_items_, 0, sizeof(page_items_));
         ui_books_cover_clear();
-        update_status_bar();
         submit_frame(ui_update_reason::content_changed);
     }
 }
@@ -221,7 +217,6 @@ void books_app::refresh_catalog(bool render)
             books_clamp_page(total_items_, page_index_));
         load_page(false);
     }
-    update_status_bar();
     if (render) { submit_frame(ui_update_reason::content_changed); }
     start_next_cover();
 }
@@ -428,13 +423,12 @@ void books_app::submit_frame(
     ui_update_reason reason,
     ui_control_type changed_control)
 {
+    update_status_bar();
     ui_render_books(build_view(), reason, changed_control);
 }
 
 void books_app::update_status_bar() const
 {
     const std::uint32_t current = page_count_ == 0U ? 0U : page_index_ + 1U;
-    if (ui_status_bar_set_page_status(true, current, page_count_)) {
-        ui_renderer_notify_status_bar();
-    }
+    ui_status_bar_set_page_status(true, current, page_count_);
 }

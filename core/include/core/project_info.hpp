@@ -1,4 +1,4 @@
 #pragma once
 
 #define PROJECT_NAME "SeeSeeBook"
-#define PROJECT_VERSION "V0.1"
+#define PROJECT_VERSION "V0.2"

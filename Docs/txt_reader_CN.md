@@ -1,18 +1,18 @@
 # TXT 阅读器工作方式
 
-TXT 阅读器由文件管理器打开 SD 卡中的文本文件，通过存储服务分块读取，在应用层分页，再由 UI 渲染任务显示。后台建立完整的页号索引，索引和续读位置统一保存在 SD 卡的 `/.system` 中。
+TXT 阅读器打开由 BooksApp 或 FileApp 选择的 SD 卡文本文件，通过存储服务分块读取，在应用层分页，再由 UI 渲染任务显示。后台建立完整页号索引，索引和续读位置统一保存在 SD 卡的 `/.system/books/` 中。
 
 ## 入口与加载流程
 
-1. 文件管理器 `file_app` 识别 `.txt` 扩展名，比较时不区分大小写。点击文件后，将完整逻辑路径、SD 卡代次 `media_generation` 和书籍格式交给 `reader_make_launch_context()`，再通过通用的 `app_request_launch()` 请求切换。
+1. BooksApp 从 BookCatalogService 取得规范化 `.txt` 路径；FileApp 则不区分大小写识别扩展名，并根据当前目录项构造路径。两者都把完整逻辑路径、SD 卡代次 `media_generation` 和书籍格式交给 `reader_make_launch_context()`，再通过通用 `app_request_launch()` 请求切换。
 2. 应用运行时持有固定容量的 `app_launch_context`，在延迟切换时通过 `prepare_launch()` 交给目标应用，然后清空。Reader 专属的参数校验和解码位于 `app/reader/reader_launch.hpp`，应用运行时不读取 Reader 字段。路径以 `/` 开头，最多 512 字节；传递的是完整路径，不是界面上排版后的文件名。
 3. `reader_app::on_open()` 建立阅读会话、整体重置运行状态和回退历史、获取排版参数，并同时提交前台正文读取和 BookService 打开请求。前台先从偏移 `0` 生成可见页面，不等待全书扫描。
 4. BookService 的 `book_index_engine` 在独立工作任务中检查 SD 上的 metadata 与索引。分页版本相同且续读信息有效时，阅读器恢复到保存位置；分页版本不同时丢弃旧索引和旧进度，从第一页重新建立索引，不使用旧页码或字节偏移。用户已经主动翻页后，后台结果不再把视图跳回打开时的位置。
 5. 每页正文仍按需读取。完整索引验证通过后，阅读器可以按页号查询字节偏移，并在状态栏显示当前页及总页数。
 
-点击正文中区可打开顶部菜单，点击菜单左侧的 `<` 调用 `app_request_back()`。返回操作由应用运行时处理。关闭阅读器后，文件管理器恢复原目录及列表页，并重新获取目录内容。每次打开和关闭 Reader 都将菜单状态重置为隐藏。
+点击正文中区可打开顶部菜单，点击菜单左侧的 `<` 调用 `app_request_back()`，应用运行时根据历史返回调用方。FileApp 恢复原目录及列表页并重新获取目录内容；BooksApp 恢复原书架页并更新 catalog snapshot。每次打开和关闭 Reader 都将菜单状态重置为隐藏。
 
-源码：[文件入口](../app/file/file_app.cpp)、[应用运行时](../app/app.cpp)、[应用注册](../app/app_registry.cpp)、[通用启动参数](../app/include/app/app_launch_context.hpp)、[Reader 启动参数](../app/reader/reader_launch.hpp)、[阅读器](../app/reader/reader_app.cpp)。
+源码：[Books 入口](../app/books/books_app.cpp)、[文件入口](../app/file/file_app.cpp)、[Catalog 服务](../services/book/book_catalog_service.cpp)、[应用运行时](../app/app.cpp)、[应用注册](../app/app_registry.cpp)、[通用启动参数](../app/include/app/app_launch_context.hpp)、[Reader 启动参数](../app/reader/reader_launch.hpp)、[阅读器](../app/reader/reader_app.cpp)。
 
 ## 架构分层
 
@@ -20,8 +20,8 @@ TXT 阅读器由文件管理器打开 SD 卡中的文本文件，通过存储服
 | --- | --- | --- |
 | `core` | 定义公共数据契约和基础算法 | 提供应用事件、结果句柄、书籍事件、页结构、UTF-8 编解码及共享分页器。前台和后台执行同一分页算法。 |
 | `m5_hal` | 封装设备与文件系统操作 | PaperMono 存储实现将逻辑路径映射到 SD 挂载路径，完成文件打开、定位、读取和关闭；显示接口负责设备绘制与刷新。 |
-| `services` | 提供存储访问及书籍缓存 | StorageService 使用工作任务、队列和结果池读取 TXT 前台数据；BookService 的低优先级工作任务校验、建立和查询索引，并读写 JSON 进度。 |
-| `app` | 管理阅读行为与内容状态 | `reader_app` 将状态组织为会话、页面、正文请求、书籍/索引、封面、导航和呈现记录，保留供菜单切换使用的正文快照，并调用共享分页器；应用运行时只负责通用启动数据、应用切换和返回历史。 |
+| `services` | 提供存储、书架目录及书籍缓存 | BookCatalogService 扫描选中的 TXT 路径并建立有界书架预览；StorageService 读取可见正文块；BookService 的低优先级工作任务校验、建立和查询索引，并读写 JSON 进度。 |
+| `app` | 管理书架入口与阅读状态 | BooksApp 和 FileApp 构造相同的 Reader 启动数据；`reader_app` 将状态组织为会话、页面、正文请求、书籍/索引、封面、导航和呈现记录；应用运行时只负责通用启动数据、应用切换和返回历史。 |
 | `ui` | 提供排版度量、展示和交互映射 | 提供字宽、行数及区域布局，将阅读状态复制到帧池，由渲染任务绘制；交互路由把坐标映射为翻页区、菜单区及返回动作，并处理菜单的命中优先级。 |
 | `system` | 驱动应用并分发事件 | 系统运行循环更新应用；事件分发器收集输入、存储结果及书籍事件，交给活动应用，分发后释放存储结果引用。 |
 
@@ -257,13 +257,13 @@ BookService 使用名为 `book_worker`、stack 为 12288 字节、优先级为 `
 
 ## 状态栏页码
 
-应用切换时更新状态栏的 `foreground_app`。Reader 收到经过验证的索引信息，并确认当前页面对应的页号后，更新 `reader_page_valid`、`current_page` 和 `total_pages`；UI 使用一份受保护的状态副本进行渲染。
+应用切换时更新状态栏的 `foreground_app`。Reader 收到经过验证的索引信息，并确认当前页面对应的页号后，通过 Reader 兼容接口更新通用中心页码状态（`center_kind`、`center_current_page`、`center_total_pages`）；UI 使用受保护的状态副本进行渲染。
 
 内部页号从 `0` 开始，显示时加 `1`。索引未验证完成时隐藏页码；退出 Reader 或进入其他应用时清除有效标记。渲染器不查询 ReaderApp 或 BookService。
 
 `/` 单独居中绘制在水平中心，当前页向其左侧右对齐，总页数向其右侧左对齐，不显示前导零。任一数值超过 `999999` 时隐藏页码区域并记录警告，内部页数不截断或钳制。
 
-源码：[状态栏状态](../ui/status_bar.cpp)、[页码布局](../ui/include/ui/reader_status_layout.hpp)、[绘制](../ui/paper_mono/ui_renderer.cpp)。
+源码：[状态栏状态](../ui/status_bar.cpp)、[页码布局](../ui/include/ui/status_bar_layout.hpp)、[绘制](../ui/paper_mono/ui_renderer.cpp)。
 
 ## 状态与资源边界
 

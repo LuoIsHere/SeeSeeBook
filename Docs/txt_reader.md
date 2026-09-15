@@ -1,18 +1,18 @@
 # How the TXT Reader Works
 
-The TXT Reader opens text files on the SD card through FileApp, reads them in blocks through StorageService, paginates visible content in the application layer, and submits immutable frames to the UI renderer. A background worker builds a complete page index. The index and resume position are stored under `/.system` on the SD card.
+The TXT Reader opens text files selected through BooksApp or FileApp, reads them in blocks through StorageService, paginates visible content in the application layer, and submits immutable frames to the UI renderer. A background worker builds a complete page index. The index and resume position are stored under `/.system/books/` on the SD card.
 
 ## Entry and loading flow
 
-1. `file_app` recognizes `.txt` without regard to case. When a file is selected, it builds the full logical path and calls `reader_make_launch_context()` with the path, the SD-card `media_generation`, and the book format. It then passes the generic context to `app_request_launch()`.
+1. BooksApp obtains a normalized `.txt` path from BookCatalogService, while FileApp recognizes the extension without regard to case and constructs the path from its directory entry. Both call `reader_make_launch_context()` with the complete logical path, SD-card `media_generation`, and book format, then pass the generic context to `app_request_launch()`.
 2. App Runtime owns one bounded `app_launch_context` until the deferred switch. It passes the context to the target application's `prepare_launch()` and then clears it. Reader-specific validation and decoding stay in `app/reader/reader_launch.hpp`; App Runtime does not inspect Reader fields. A logical path starts with `/`, is at most 512 bytes, and is independent of the shortened name shown by FileApp.
 3. `reader_app::on_open()` starts a session, resets all runtime state and page history, obtains the text layout, and submits foreground content and BookService open requests. TXT foreground reading starts at offset `0`, so the first visible page does not wait for a full-book scan.
 4. The BookService `book_index_engine` worker checks metadata and the index on the SD card. When pagination versions and resume data are valid, Reader restores the saved location. A pagination-version mismatch discards the old index and progress, opens the first page, and rebuilds from the beginning without using an old page or byte offset. A background result cannot move the view back to the opening position after the user has navigated.
 5. Visible pages remain demand-loaded. After the complete index is validated, Reader can query page offsets by page number and show the current and total page counts.
 
-Clicking the middle content zone opens the top menu. Clicking `<` in that menu calls `app_request_back()`. App Runtime applies the return history. After Reader closes, FileApp restores its directory and list page and reloads the directory. Opening and closing Reader both reset the menu to hidden.
+Clicking the middle content zone opens the top menu. Clicking `<` in that menu calls `app_request_back()`, and App Runtime returns to the caller recorded in its history. FileApp restores its directory and list page and reloads the directory; BooksApp restores its shelf page and refreshes the catalog snapshot. Opening and closing Reader both reset the menu to hidden.
 
-Source: [file entry](../app/file/file_app.cpp), [App Runtime](../app/app.cpp), [app registry](../app/app_registry.cpp), [generic launch context](../app/include/app/app_launch_context.hpp), [Reader launch data](../app/reader/reader_launch.hpp), and [Reader](../app/reader/reader_app.cpp).
+Source: [Books entry](../app/books/books_app.cpp), [file entry](../app/file/file_app.cpp), [catalog service](../services/book/book_catalog_service.cpp), [App Runtime](../app/app.cpp), [app registry](../app/app_registry.cpp), [generic launch context](../app/include/app/app_launch_context.hpp), [Reader launch data](../app/reader/reader_launch.hpp), and [Reader](../app/reader/reader_app.cpp).
 
 ## Architecture layers
 
@@ -20,8 +20,8 @@ Source: [file entry](../app/file/file_app.cpp), [App Runtime](../app/app.cpp), [
 | --- | --- | --- |
 | `core` | Shared data contracts and base algorithms | Defines app events, result handles, book events, page structures, UTF-8 routines, and the shared paginator. Foreground and background pagination use the same algorithm. |
 | `m5_hal` | Device and file-system operations | PaperMono storage maps logical paths to the SD mount and performs open, seek, read, write, and close operations. Display interfaces draw and refresh the device. |
-| `services` | Storage access and book caches | StorageService uses a worker, queues, and a result pool for visible TXT blocks. The lower-priority BookService worker validates, builds, and queries indexes and reads or writes JSON progress. |
-| `app` | Reading behavior and content state | `reader_app` groups state into session, page, content-request, book/index, cover, navigation, and presentation records. It owns a stable body snapshot for menu updates and invokes the shared paginator. App Runtime only owns generic launch bytes, switching, and return history. |
+| `services` | Storage access, catalog, and book caches | BookCatalogService scans selected TXT paths and creates bounded shelf previews. StorageService reads visible TXT blocks. The lower-priority BookService worker validates, builds, and queries indexes and reads or writes JSON progress. |
+| `app` | Shelf entry and reading state | BooksApp and FileApp create the same typed Reader launch data. `reader_app` groups state into session, page, content-request, book/index, cover, navigation, and presentation records. App Runtime only owns generic launch bytes, switching, and return history. |
 | `ui` | Layout metrics, presentation, and interaction mapping | Supplies glyph widths, line counts, and regions; copies Reader state into the frame pool; renders frames on a worker; and maps coordinates to page, menu, and return actions. |
 | `system` | Application updates and event delivery | The system loop updates the active application. The dispatcher collects input, storage results, and book events, delivers them to the active app, and releases result references afterward. |
 
@@ -257,13 +257,13 @@ Source: [background worker and I/O adapter](../services/book/book_service.cpp), 
 
 ## Status-bar page number
 
-App switching updates the status bar's `foreground_app`. After Reader receives a validated index and confirms the current page number, it updates `reader_page_valid`, `current_page`, and `total_pages`; the UI renders a protected copy of that state.
+App switching updates the status bar's `foreground_app`. After Reader receives a validated index and confirms the current page number, it updates the generic center page state (`center_kind`, `center_current_page`, and `center_total_pages`) through the Reader compatibility API; the UI renders a protected copy of that state.
 
 Internal page numbers start at `0` and display as one based. The number is hidden before index validation and while a cover is shown. Leaving Reader or entering another app clears the validity flag. The renderer does not query ReaderApp or BookService.
 
 `/` is centered. The current page is right aligned to its left and the total is left aligned to its right, without leading zeros. If either value exceeds `999999`, the number region is hidden and a warning is logged; the internal value is not truncated or clamped.
 
-Source: [status-bar state](../ui/status_bar.cpp), [page-number layout](../ui/include/ui/reader_status_layout.hpp), and [rendering](../ui/paper_mono/ui_renderer.cpp).
+Source: [status-bar state](../ui/status_bar.cpp), [page-number layout](../ui/include/ui/status_bar_layout.hpp), and [rendering](../ui/paper_mono/ui_renderer.cpp).
 
 ## States and resource boundaries
 

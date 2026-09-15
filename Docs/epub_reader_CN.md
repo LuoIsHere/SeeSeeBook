@@ -4,7 +4,7 @@
 
 ## 打开与数据流
 
-1. `FileApp` 使用 `book_file_format_from_name()` 识别 `.txt` 和 `.epub`。它只建立完整逻辑路径，通过 `reader_make_launch_context()` 将路径、`media_generation` 和格式写入带类型的固定容量数据，再调用通用的 `app_request_launch()`。
+1. BooksApp 从 BookCatalogService 取得规范化 `.epub` 路径和格式；FileApp 则不区分大小写识别 `.txt` 与 `.epub`，并根据当前目录项构造路径。两者都通过 `reader_make_launch_context()` 将完整逻辑路径、`media_generation` 和格式写入带类型的固定容量数据，再调用通用 `app_request_launch()`。
 2. App Runtime 持有该通用数据直到延迟切换，并调用目标应用的 `prepare_launch()`；`ReaderApp` 自行校验和复制 Reader 参数。`ReaderApp::on_open()` 随后建立新的 `session_id`，取得共享文字布局，并向 `BookService` 提交 EPUB 打开命令。ReaderApp 不读取 ZIP、XML 或 FATFS。
 3. BookService 的 `book_worker` 打开 ZIP，解析 `META-INF/container.xml` 中的 OPF 路径，解析 OPF 的 manifest、spine 和封面项，然后按 spine 顺序处理 XHTML。
 4. XHTML 经流式过滤器转换为连续 UTF-8 文本。转换结果、spine 映射和封面以派生文件形式写入 SD 卡，完整 metadata 最后原子替换。
@@ -14,7 +14,7 @@
 完整正文调用链为：
 
 ```text
-FileApp
+BooksApp / FileApp
   → reader_make_launch_context
   → app_request_launch
   → 通用 app_launch_context
@@ -35,15 +35,16 @@ FileApp
 | 层级 | 模块 | 职责 |
 | --- | --- | --- |
 | Core | `book_file_format`、`book_types`、`text_paginator` | 定义书籍格式、跨层小型事件、EPUB 位置和值类型，并提供 TXT/EPUB 共用分页。 |
-| App | `FileApp` | 识别文件格式并构造 Reader 的带类型启动参数。 |
+| App | `BooksApp`、`FileApp` | 选择 catalog 或目录项，并构造相同的 Reader 带类型启动参数。 |
 | App | App Runtime | 持有一次延迟切换所需的通用启动数据，并管理切换、返回历史和 Mooncake 生命周期，不包含 Reader 专属字段或分支。 |
 | App | `ReaderApp` | 将会话、页面、正文请求、书籍/索引、封面、导航和呈现状态按职责组织，管理加载、翻页、错误和异步结果生命周期。 |
-| Service | `book_service` | 串行执行解析、缓存、分页索引和内容块读取；发布小型事件及结果句柄。 |
+| Service | `book_catalog_service` | 扫描选中的 EPUB 路径，串行校验或建立书架封面 cache，持久化 catalog，并在 Reader 启动前暂停。 |
+| Service | `book_service` | 串行执行 Reader 解析、缓存、分页索引和内容块读取；发布小型事件及结果句柄。 |
 | Service | `epub_archive` | 校验 ZIP32 目录和本地头，查找 entry，并流式处理 Stored 或 Deflate 数据及 CRC。 |
 | Service | `epub_format` | 解析 container/OPF、规范化内部路径、提取封面引用、把 XHTML 转为 UTF-8 文本、编解码 EPUB metadata 和 spine map。 |
 | Service | `epub_cache_engine` | 协调解析状态机和 SD 派生文件，校验源文件及缓存，保存 EPUB 位置。 |
 | UI | `reader_cover`、`reader_renderer` | 在 PSRAM 中管理有代次和引用计数的压缩封面，校验图片头，并绘制封面、正文和顶部菜单。 |
-| HAL | Storage / Display | 按偏移读写普通文件；使用 M5GFX 将 JPEG/PNG 解码到八位灰度临时画布，再转换到一位显示画布。HAL 不解析 EPUB。 |
+| HAL | Storage / Display | 按偏移读写普通文件；使用 M5GFX 将 JPEG/PNG 解码到八位灰度临时画布，再量化或抖动到 packed 2bpp 显示 framebuffer。HAL 不解析 EPUB。 |
 
 TXT 的正文仍由 StorageService 按块读取。EPUB 的 ZIP、package、XHTML 和 SD 派生缓存位于独立模块；两种格式共享 ReaderApp 的交互状态、TextPaginator、页面数据、BookIndex 基础机制、UI frame 和 Renderer。
 
@@ -103,13 +104,13 @@ at_cover
 
 EPUB3 封面来自 manifest 的 `properties="cover-image"`。EPUB2 支持 metadata 中的 `meta name="cover"`，也支持 cover XHTML 或 guide 引用中的 `img` / SVG `image` 链接。实际图片仅接受 JPEG 和 PNG。
 
-压缩封面先流式复制到 SD 的 `epub_cover.bin`，显示时再由 BookService 以 2048 字节块传递。Reader cover store 在 PaperMono 配置中只从 PSRAM 分配，最多保留两个带引用计数的压缩数据槽，每个封面上限 512 KiB；退出 Reader 时释放。PNG 必须具有有效 IHDR，JPEG 必须在前 64 KiB 内出现 SOF；宽、高各不超过 4096。M5GFX 先将图片按内容区比例居中解码到 PSRAM 中的八位灰度临时画布，再用固定 4×4 Bayer 阈值转换为一位黑白帧，不覆盖公共状态栏。当前 SSD1677 后端使用单色 OTP 刷新序列。
+压缩封面先流式复制到 SD 的 `epub_cover.bin`，显示时再由 BookService 以 2048 字节块传递。Reader cover store 在 PaperMono 配置中只从 PSRAM 分配，最多保留两个带引用计数的压缩数据槽，每个封面上限 512 KiB；退出 Reader 时释放。PNG 必须具有有效 IHDR，JPEG 必须在前 64 KiB 内出现 SOF；宽、高各不超过 4096。M5GFX 将图片按内容区比例居中解码到 PSRAM 中的八位灰度临时画布；Reader 再把亮度量化为 Black、Dark Gray、Light Gray、White，写入共用 2bpp framebuffer，并由 SSD1677 `0xD7` 真实四灰度波形显示。图片不覆盖公共状态栏。BooksApp 复用同一图片接口，但显式选择 `mono_dither`，通过固定 4×4 Bayer 阈值把书架封面投影为纯黑白，使书架保持单色刷新路径。
 
 封面 entry 的解压、CRC、SD 写入、头部校验或图片解码失败时，Reader 保持正文可读：解析阶段丢弃封面，显示阶段无法使用封面时进入正文或显示封面占位内容，右侧仍可进入正文。
 
 ## 任务、内存和生命周期
 
-EPUB 没有新增 FreeRTOS task。原 BookIndex worker 扩展并命名为 `book_worker`，stack 为 12288 字节、priority 为 2，串行处理 BookService 命令、EPUB 状态机和分页索引。每个循环只执行一个有界步骤并 `vTaskDelay(1)`，Mooncake 的 `on_open()`、`on_running()` 和事件回调不做 ZIP/XML/XHTML 扫描或图片解码。封面解码发生在 UI renderer task。
+Reader 侧 EPUB 解析没有新增 FreeRTOS task。原 BookIndex worker 扩展并命名为 `book_worker`，stack 为 12288 字节、priority 为 2，串行处理 BookService 命令、EPUB 状态机和分页索引。BookCatalogService 另有一个有界 worker，负责 SD 扫描和串行书架 cache enrichment；BooksApp 打开 Reader 前会暂停它并等待 idle 确认，避免两个 cache engine 同时写入同一本书的目录。两个 worker 都在有界步骤之间让出 CPU。Mooncake 生命周期和事件回调不做 ZIP/XML/XHTML 扫描或图片解码；封面解码发生在 UI renderer task。
 
 固定或明确受限的容量如下：
 

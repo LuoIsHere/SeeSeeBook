@@ -2,40 +2,63 @@
 
 [English documentation](README.md)
 
+> 这是一个大学生的练手作品，由作者与 Codex 共同完成，其中可能存在一些不成熟之处。如有任何问题或建议，欢迎交流。
+
 ## 项目介绍
 
-SeeSeeBook 是面向 M5Stack PaperMono（ESP32-S3）的固件，基于 ESP-IDF 和 Mooncake 开发。项目在单色墨水屏上提供触摸操作的实用功能，包括菜单导航、屏幕与前光控制、RTC 设置、电池信息、SD 卡目录浏览以及 TXT/EPUB 阅读。
+SeeSeeBook 是面向 M5Stack PaperMono（ESP32-S3）的固件，基于 ESP-IDF 和 Mooncake 开发。项目在 PaperMono 触摸屏上提供基于 SD 卡的 Books 书架、文件浏览、TXT/EPUB 阅读、设备设置和诊断功能。
 
 ## 项目状态
 
-v0.1 仍处于早期开发阶段，可能存在不稳定行为、错误或兼容性问题。本仓库的设备实现面向 PaperMono。简要版本记录见 [CHANGELOG.md](CHANGELOG.md)。
+当前版本为 V0.2，目标设备为 M5Stack PaperMono。书架目录、EPUB 派生数据、分页索引和阅读进度统一保存在 SD 卡的 `/.system/books/` 下。版本摘要见 [CHANGELOG.md](CHANGELOG.md)，存储格式和实现边界见阅读器说明文档。
 
 ## 应用功能
 
-| 注册 App | 菜单名称 | 用途 |
+| 注册 App | 入口 | 用途 |
 | --- | --- | --- |
-| MenuApp | — | 开机进入，提供应用入口。 |
-| TestApp | Screen Setting | 测试显示内容、触摸坐标和持续时间（含长按）；提供 OFF、25%、50%、75%、100% 五档前光调节。 |
-| RTCSettingApp | RTC Setting | 读取并使用数字键盘编辑本地 RTC 日期和时间，保存前进行校验。 |
-| BatteryApp | Battery | 显示电量百分比、电压、电流栏和充电状态；页面打开时每 5 秒采样一次。 |
-| FileApp | Files | 浏览 SD 卡目录和分页文件列表，打开支持的书籍文件，并处理插卡与拔卡状态。 |
-| ReaderApp | — | 阅读 UTF-8 TXT 和无 DRM 的流式排版 EPUB，提供翻页和 SD 卡进度保存。 |
+| LauncherApp | 启动页 | 固定显示一级入口 `Books`、`File`、`Menu`。 |
+| BooksApp | Books | 以 3 × 2 网格显示 SD 书架，管理 TXT/EPUB 扫描设置、TXT 预览和 EPUB 书架封面，并打开 Reader。 |
+| FileApp | File | 浏览 SD 卡目录和分页文件列表，打开支持的书籍，并处理插卡与拔卡状态。 |
+| MenuApp | Menu | 按 descriptor 顺序显示 `Screen Setting`、`RTC Setting`、`Battery`、`Gray4 Test`。 |
+| TestApp | Screen Setting | 显示屏幕和触摸诊断信息，并提供 OFF、25%、50%、75%、100% 五档前光调节。 |
+| RTCSettingApp | RTC Setting | 读取并使用经过校验的数字键盘编辑本地 RTC 日期和时间。 |
+| BatteryApp | Battery | 显示电量百分比、电压、电流可用状态和充电状态；页面打开时每 5 秒采样一次。 |
+| Gray4TestApp | Gray4 Test | 显示四个固定灰阶块和分段灰阶带，用于 PaperMono 实机检查。 |
+| ReaderApp | 内部入口 | 阅读 UTF-8 TXT 和无加密的流式 EPUB，支持分页、EPUB 逻辑第 0 页封面和 SD 进度保存。 |
 
-点击菜单入口打开 App，使用 `< Back` 返回。公共底部状态栏显示 `HH:MM`、电量百分比，并在确认充电时显示闪电符号。PaperMono 的电流读数不可用，以 `--` 显示；充电状态不可用时显示 `Unknown`。BatteryApp 仅监测信息，不配置充电参数。
+公共底部状态栏显示 `HH:MM`、电量百分比，并在确认充电时显示闪电符号；中部可显示 Books 或 Reader 页码。当前 PaperMono 实现不能取得电流读数，因此 BatteryApp 的电流栏显示 `--`；充电状态不可用时显示 `Unknown`。
 
 - RTC Setting 在进入时读取一次 RTC。点击日期或时间字段后输入数字，点击勾号保存；退格清空所选字段，Back 取消未保存的编辑。所有数值使用设备本地时间，不做时区转换。
-- Files 使用 FAT32 SD 卡，不自动格式化。目录优先于文件，按名称排序。点击目录进入，使用 `..` 返回上级（在 `/` 下无动作），使用底部箭头翻页。支持长文件名和中文文件名；名称单行显示，超出部分以 `...` 代替。点击 `.txt` 或 `.epub` 文件会进入 Reader，其他文件显示三秒的不支持提示。挂载出错后需拔出并重新插入 SD 卡。
-- Reader 的正文左区和右区用于翻页，中区用于打开顶部菜单；菜单返回控件显示为 `<`。EPUB 在没有保存位置且存在可用封面时先显示封面，已有进度时直接恢复保存页。实现细节见 [TXT 阅读器说明](Docs/txt_reader_CN.md)和 [EPUB 阅读器说明](Docs/epub_reader_CN.md)。
+- Books 根据独立保存的 TXT 和 EPUB checkbox 从 SD 根目录扫描，排除包含隐藏路径分量的目录。目录和设置通过临时文件原子写入 `/.system/books/catalog_v1.bin`。每页显示六本书；TXT 显示有界正文预览，EPUB 在可用时显示缓存封面。书架封面使用稳定的 1-bit Bayer 投影，以保持低成本单色刷新。
+- File 使用 FAT32 SD 卡，不自动格式化。目录优先于文件并按名称排序。点击目录进入，使用 `..` 返回上级，使用底部箭头翻页。长文件名和中文文件名按 UTF-8 安全截断。点击 `.txt` 或 `.epub` 文件进入 Reader，其他文件显示临时的不支持提示。
+- Reader 正文左区和右区用于翻页，中区用于打开顶部菜单；菜单返回控件为 `<`。可用 EPUB 封面是逻辑第 0 页，此时隐藏页码。已保存书籍恢复到经过校验的页面；分页数据不兼容时完全弃用旧进度和索引并从头重建。实现细节见 [TXT 阅读器说明](Docs/txt_reader_CN.md)和 [EPUB 阅读器说明](Docs/epub_reader_CN.md)。
+
+## 书籍格式支持边界
+
+| 格式 | 已实现范围 | 边界 |
+| --- | --- | --- |
+| TXT | UTF-8，可带 BOM；支持 LF、CRLF、CR 换行，以及按需分页、页索引和进度恢复。 | 不解码其他文本编码；非法 UTF-8 会进入 Reader 错误状态。 |
+| EPUB | 无加密的流式 EPUB2/EPUB3；支持 ZIP32 Stored/Deflate、线性 spine、UTF-8 XHTML 正文和 JPEG/PNG 封面。 | 不处理 DRM、加密 entry、ZIP64、固定版式、CSS/浏览器排版和正文多媒体。 |
+
+解析、存储、进度和容量限制详见 [TXT 阅读器说明](Docs/txt_reader_CN.md)与 [EPUB 阅读器说明](Docs/epub_reader_CN.md)。
+
+## PaperMono 显示
+
+所有绘制统一存入 PSRAM 中一张 800 × 480 packed 2bpp framebuffer。纯黑白 UI 帧使用单色 OTP 路径，Renderer 根据残影债务阈值执行单色清理；包含浅灰或深灰的帧使用 SSD1677 `0xD7` 四灰度全刷。Reader 封面和 Gray4 Test 使用真实四灰度，Books 书架封面明确使用 1-bit 抖动。单色全刷或四灰度全刷期间前光会关闭，完成后恢复。
+
+PaperMono 的 `0xFF` 快速刷新在激活前把完整的 48,000 字节单色目标同步到控制器 RAM1。UI dirty rect 仍限制逻辑绘制、请求合并和分区残影计数，但不裁剪这次控制器传输。驱动细节和参考来源见 [PaperMono 显示后端说明](m5_hal/paper_mono/display/README.md)。
 
 ## 项目架构
 
 工程按独立的 ESP-IDF 组件组织，通过各层的 `CMakeLists.txt` 配置构建。
 
 ```text
-App 逻辑 (app/)
+Launcher / Books / File / Menu / Reader (app/)
     |
     v
-服务 / 系统运行时 (services/, system/)
+系统运行时与服务 (system/, services/)
+    |                |
+    |                +--> SD catalog / EPUB cache / 索引 / 进度
     |
     v
 硬件抽象层 (m5_hal/) --> PaperMono
@@ -44,7 +67,7 @@ App --> View State --> UI Renderer (ui/) --> Display HAL
 ```
 
 - `app/` 负责应用逻辑和状态，并接入 Mooncake 生命周期。
-- `services/` 提供 RTC、电池、存储、输入、前光、书籍索引和 EPUB 解析/缓存能力；`system/` 统一协调运行时更新、事件分发和公共状态。
+- `services/` 提供 RTC、电池、存储、输入、前光、书架目录、书籍索引和 EPUB 解析/缓存能力；`system/` 统一协调初始化、运行时更新、事件分发和公共状态。
 - `ui/include/ui/` 定义 View State 和 UI 接口；`ui/paper_mono/` 负责设备相关的绘制与布局。
 - `m5_hal/include/hal/` 定义硬件接口；`m5_hal/paper_mono/` 实现 PaperMono 硬件访问。
 - `main/` 初始化并运行系统；`core/` 保存公共数据契约和[项目关键信息](core/include/core/project_info.hpp)。
@@ -98,13 +121,23 @@ idf.py build
 - `reconfigure`：重新生成并检查工程配置与组件依赖。
 - `build`：编译项目并生成固件构建产物。
 
+### 运行本地集成测试
+
+测试固件在 ESP32-S3 QEMU 中验证 App 导航、Books catalog、TXT/EPUB 阅读、SD 生命周期、进度和索引、UI frame、Gray4 打包、图片投影与刷新策略。在 ESP-IDF 和 QEMU 工具可用时执行：
+
+```bash
+python ci/reader_tests/run_tests.py --build
+```
+
+成功运行会以状态码 `0` 退出，并输出 `ALL_READER_TESTS_PASSED`。工具查找、复用已有构建、生成文件和失败条件见 [ci/README.md](ci/README.md)。PaperMono 波形、残影、前光时序和物理灰阶区分仍需在设备上观察。
+
 ## 二次开发
 
 ### 添加 App
 
 1. 在 `app/<app_name>/` 中添加继承自 [app_base](app/include/app/app_base.hpp) 的应用逻辑，并在 `ui/include/ui/` 中定义 View State。
 2. 在 `ui/paper_mono/views/` 中添加或复用 Renderer，布局放在 `ui/paper_mono/layout.hpp`，接入已有的 UI 呈现与交互接口。
-3. 添加 App 和 View 标识，在 [app/app_registry.cpp](app/app_registry.cpp) 中注册描述符（`kind`、`view`、`name`）与工厂函数。需要菜单入口时，在 [app/menu/menu_layout.hpp](app/menu/menu_layout.hpp) 中添加目标和名称；数组顺序决定显示顺序。菜单容量为四项，超出会在编译时检查失败。可按需增加容量。
+3. 添加 App 和 View 标识，在 [app/app_registry.cpp](app/app_registry.cpp) 中注册描述符（`kind`、`view`、`name`）与工厂函数。一级入口定义在 [app/launcher/launcher_layout.hpp](app/launcher/launcher_layout.hpp)，二级入口定义在 [app/menu/menu_layout.hpp](app/menu/menu_layout.hpp)。数组顺序决定显示顺序，编译期检查会拒绝重复、未注册或超过容量的配置。
 4. 将源文件加入对应组件的 `CMakeLists.txt`。复用现有事件分发和非阻塞的 Mooncake 生命周期回调，通过 Service 使用系统能力，不在 App 中直接访问 HAL。
 
 ### 添加设备

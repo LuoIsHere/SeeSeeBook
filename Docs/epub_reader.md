@@ -4,7 +4,7 @@ This document describes the EPUB reading path implemented in the source. Reader 
 
 ## Opening and data flow
 
-1. `FileApp` uses `book_file_format_from_name()` to recognize `.txt` and `.epub`. It builds the full logical path, calls `reader_make_launch_context()` with the path, `media_generation`, and format, then passes that generic context to `app_request_launch()`.
+1. BooksApp obtains a normalized `.epub` path and format from BookCatalogService; FileApp recognizes `.txt` and `.epub` without regard to case and constructs the path from its directory entry. Both call `reader_make_launch_context()` with the complete logical path, `media_generation`, and format, then pass that generic context to `app_request_launch()`.
 2. App Runtime retains the bounded context until the deferred switch and calls the target application's `prepare_launch()`. `ReaderApp` validates and copies its own typed payload. `ReaderApp::on_open()` then creates a new `session_id`, obtains the shared text layout, and submits an EPUB open command to `BookService`. ReaderApp does not read ZIP, XML, or FATFS directly.
 3. The BookService `book_worker` opens the ZIP, finds the OPF path through `META-INF/container.xml`, parses the OPF manifest, spine, and cover item, and processes XHTML in spine order.
 4. A streaming XHTML filter converts the documents into continuous UTF-8 text. Derived text, spine mapping, and the compressed cover are stored on the SD card. Complete metadata is replaced last.
@@ -14,7 +14,7 @@ This document describes the EPUB reading path implemented in the source. Reader 
 The body path is:
 
 ```text
-FileApp
+BooksApp / FileApp
   → reader_make_launch_context
   → app_request_launch
   → generic app_launch_context
@@ -35,15 +35,16 @@ FileApp
 | Layer | Module | Responsibility |
 | --- | --- | --- |
 | Core | `book_file_format`, `book_types`, `text_paginator` | Defines book formats, small cross-layer events, EPUB position/value types, and shared TXT/EPUB pagination. |
-| App | `FileApp` | Identifies the file format and constructs Reader's typed launch payload. |
+| App | `BooksApp`, `FileApp` | Select a catalog or directory item and construct the same typed Reader launch payload. |
 | App | App Runtime | Owns generic launch bytes for one deferred switch and manages switching, return history, and Mooncake lifecycle without Reader-specific fields or branches. |
 | App | `ReaderApp` | Groups session, page, content-request, book/index, cover, navigation, and presentation state; manages loading, paging, errors, and asynchronous result lifetimes. |
-| Service | `book_service` | Serializes parsing, caching, page indexing, and block reads and publishes small events and result handles. |
+| Service | `book_catalog_service` | Scans selected EPUB paths, validates or builds shelf cover caches serially, persists catalog state, and pauses before Reader starts. |
+| Service | `book_service` | Serializes Reader parsing, caching, page indexing, and block reads and publishes small events and result handles. |
 | Service | `epub_archive` | Validates ZIP32 directories and local headers, finds entries, and streams Stored or Deflate data while checking CRC. |
 | Service | `epub_format` | Parses container and OPF files, normalizes internal paths, finds cover references, converts XHTML to UTF-8 text, and encodes or decodes EPUB metadata and the spine map. |
 | Service | `epub_cache_engine` | Coordinates the parser state machine and SD-derived files, validates source and cache data, and stores EPUB positions. |
 | UI | `reader_cover`, `reader_renderer` | Keeps generation-tagged, reference-counted compressed covers in PSRAM, validates image headers, and renders the cover, body, and top menu. |
-| HAL | Storage / Display | Reads and writes ordinary files by offset. M5GFX decodes JPEG or PNG into an eight-bit grayscale temporary canvas and converts it to the one-bit display canvas. The HAL does not parse EPUB. |
+| HAL | Storage / Display | Reads and writes ordinary files by offset. M5GFX decodes JPEG or PNG into an eight-bit grayscale temporary canvas and quantizes or dithers it into the packed 2bpp display framebuffer. The HAL does not parse EPUB. |
 
 TXT body blocks still come directly from StorageService. EPUB ZIP, package, XHTML, and derived-cache code are separate modules. Both formats share ReaderApp interaction state, TextPaginator, page values, BookIndex mechanisms, UI frames, and the Renderer.
 
@@ -105,13 +106,13 @@ An EPUB3 cover comes from a manifest item with `properties="cover-image"`. EPUB2
 
 The compressed cover is streamed first to `epub_cover.bin` on the SD card and later returned by BookService in 2048-byte blocks. In the PaperMono configuration, the Reader cover store allocates only from PSRAM and retains at most two generation-tagged, reference-counted compressed slots. Each cover is limited to 512 KiB and is released when Reader closes. PNG requires a valid IHDR. JPEG must have an SOF marker within the first 64 KiB. Width and height are each limited to 4096 pixels.
 
-M5GFX centers and scales the image to the content region in an eight-bit grayscale PSRAM canvas, then converts it to the one-bit display canvas with a fixed 4×4 Bayer threshold. It does not cover the shared status bar. The current SSD1677 backend uses a monochrome OTP refresh sequence, so gray values are represented by spatial dithering rather than native gray levels.
+M5GFX centers and scales the image to the content region in an eight-bit grayscale PSRAM canvas. Reader quantizes luminance into Black, Dark Gray, Light Gray, and White in the shared 2bpp framebuffer, then the SSD1677 backend uses the real `0xD7` four-level waveform. The image does not cover the shared status bar. BooksApp reuses the same image API with an explicit `mono_dither` mode, which projects shelf covers to Black/White through a fixed 4×4 Bayer threshold and keeps shelf updates on the monochrome path.
 
 If cover-entry decompression, CRC, SD writing, header validation, or image decoding fails, the body remains readable. Parsing discards an unusable cover; a display-time failure enters the body or shows the cover fallback, and the right zone still opens the body.
 
 ## Tasks, memory, and lifecycle
 
-EPUB adds no FreeRTOS task. The BookIndex worker is extended and named `book_worker`; it has a 12288-byte stack and priority `2`. It serially processes BookService commands, the EPUB state machine, and page indexing. Each loop executes one bounded step and calls `vTaskDelay(1)`. Mooncake `on_open()`, `on_running()`, and event callbacks do not scan ZIP, XML, or XHTML and do not decode images. Cover decoding runs in the UI renderer task.
+Reader-side EPUB parsing adds no FreeRTOS task. The BookIndex worker is extended and named `book_worker`; it has a 12288-byte stack and priority `2`. It serially processes BookService commands, the EPUB state machine, and page indexing. BookCatalogService has a separate bounded worker for SD scanning and serial shelf-cache enrichment; BooksApp pauses it and waits for the idle acknowledgement before opening Reader, so two cache engines do not write the same book directory concurrently. Each worker loop yields between bounded steps. Mooncake callbacks do not scan ZIP, XML, or XHTML and do not decode images. Cover decoding runs in the UI renderer task.
 
 Fixed or explicitly bounded capacities are:
 

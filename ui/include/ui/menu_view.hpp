@@ -6,6 +6,7 @@
 
 inline constexpr std::size_t menu_view_entry_capacity = 5U;
 inline constexpr std::size_t menu_view_label_capacity = 24U;
+inline constexpr std::uint8_t menu_no_selection = UINT8_MAX;
 
 struct menu_entry_view_state {
     char label[menu_view_label_capacity];
@@ -14,6 +15,7 @@ struct menu_entry_view_state {
 struct menu_view_state {
     menu_entry_view_state entries[menu_view_entry_capacity];
     std::uint8_t entry_count;
+    std::uint8_t selected_index = menu_no_selection;
 };
 
 static_assert(std::is_trivially_copyable_v<menu_view_state>);

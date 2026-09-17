@@ -178,13 +178,13 @@ void test_reader_rendering()
     next.payload.reader.menu_visible = true;
     CHECK_UI(resolve_request_region(next, &previous, true, false) == display_update_region::reader_menu);
     display_rect rect{};
-    draw_partial_request(next, next.update_region, rect);
+    draw_partial_request(next, &previous, next.update_region, rect);
     CHECK_UI(rect.top == 0 && rect.height == 80);
     CHECK_UI(pixels[31 * 60 + 3] != baseline[31 * 60 + 3]); // Covered first line.
     CHECK_UI(std::equal(pixels.begin() + 80 * 60, pixels.end(), baseline.begin() + 80 * 60));
     CHECK_UI(labels.size() == 1 && labels[0].text == "<" && labels[0].x == 24);
     next.payload.reader.menu_visible = false;
-    draw_partial_request(next, next.update_region, rect);
+    draw_partial_request(next, &previous, next.update_region, rect);
     CHECK_UI(std::equal(pixels.begin(), pixels.end(), baseline.begin())); // Hide restores text exactly.
     for (unsigned change = 0; change < 4; ++change) {
         next.payload.reader = previous.payload.reader;
@@ -259,6 +259,9 @@ void test_reader_rendering()
         {ui_update_reason::selection_changed,
          ui_control_type::books_setting_toggle_epub,
          display_update_region::books_setting_epub, refresh_mode::fastest},
+        {ui_update_reason::selection_changed,
+         ui_control_type::books_select_item,
+         display_update_region::focus, refresh_mode::fastest},
     };
     for (const books_request_case& test : books_cases) {
         CHECK_UI(tested_ui_render_books(books, test.reason, test.control));
@@ -295,6 +298,20 @@ void test_reader_rendering()
     CHECK_UI(launcher_frame->update_region == display_update_region::full);
     CHECK_UI(launcher_frame->mode == refresh_mode::fastest);
     CHECK_UI(ui_frame_pool_release(launcher_handle));
+
+    display_request previous_focus{};
+    previous_focus.view = ui_view_id::launcher;
+    previous_focus.payload.launcher.entry_count = 3U;
+    previous_focus.payload.launcher.selected_index = 0U;
+    display_request next_focus = previous_focus;
+    next_focus.payload.launcher.selected_index = 2U;
+    display_rect focus_rect{};
+    draw_focus_request(next_focus, &previous_focus, focus_rect);
+    const auto first_focus = launcher_entry_rect(0U);
+    const auto last_focus = launcher_entry_rect(2U);
+    CHECK_UI(focus_rect.top == first_focus.top);
+    CHECK_UI(focus_rect.top + focus_rect.height ==
+             last_focus.top + last_focus.height);
 
     gray4_test_view_state gray4{};
     CHECK_UI(tested_ui_render_gray4_test(gray4, ui_update_reason::view_opened));

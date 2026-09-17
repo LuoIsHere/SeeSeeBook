@@ -5,12 +5,14 @@
 
 #include "battery_snapshot.hpp"
 #include "book_types.hpp"
+#include "navigation_event.hpp"
 #include "result_handle.hpp"
 #include "rtc_datetime.hpp"
 #include "storage_state.hpp"
 #include "ui_action.hpp"
 
 enum class app_event_type : std::uint8_t {
+    navigation,
     ui_action,
     rtc,
     battery,
@@ -48,6 +50,7 @@ struct app_storage_result_event {
 
 struct app_event {
     app_event_type type;
+    navigation_event navigation;
     ui_action_event action;
     app_rtc_event rtc;
     app_battery_event battery;

@@ -152,6 +152,18 @@ void reader_app::handle_app_event(const app_event& event)
         return;
     }
     switch (event.type) {
+        case app_event_type::navigation: {
+            ui_action_event action = {};
+            action.input.gesture = input_gesture_type::click;
+            if (event.navigation.action == navigation_action::previous) {
+                action.control = ui_control_type::reader_previous_zone;
+                handle_action(action);
+            } else if (event.navigation.action == navigation_action::next) {
+                action.control = ui_control_type::reader_next_zone;
+                handle_action(action);
+            }
+            break;
+        }
         case app_event_type::ui_action:
             handle_action(event.action);
             break;

@@ -73,11 +73,13 @@ void draw_books_toolbar(display_surface& surface)
         BOOKS_TOOLBAR_TEXT_SIZE);
 }
 
+}  // namespace
+
 void draw_books_item(
     display_surface& surface,
     const books_view_state& state,
     std::uint8_t index,
-    bool pressed = false)
+    bool pressed)
 {
     if (index >= books_view_item_capacity) {
         return;
@@ -145,7 +147,13 @@ void draw_books_item(
     }
 
     const display_rect name = books_file_name_rect(index);
-    surface.set_text_color(display_color::black, display_color::white);
+    const bool focused = state.selected_index == index && item.enabled;
+    const display_color name_background =
+        focused ? display_color::black : display_color::white;
+    const display_color name_foreground =
+        focused ? display_color::white : display_color::black;
+    surface.fill_rect(name, name_background);
+    surface.set_text_color(name_foreground, name_background);
     const std::size_t line_count = std::min<std::size_t>(
         item.file_name.line_count,
         books_file_name_line_count);
@@ -161,7 +169,18 @@ void draw_books_item(
                 name.top + BOOKS_FILE_NAME_LINE_HEIGHT / 2 +
                 line * BOOKS_FILE_NAME_LINE_HEIGHT));
     }
+    if (focused) {
+        surface.draw_rect(cell, display_color::black);
+        surface.draw_rect(
+            cell.left + 1,
+            cell.top + 1,
+            cell.width - 2,
+            cell.height - 2,
+            display_color::black);
+    }
 }
+
+namespace {
 
 void draw_checkbox(
     display_surface& surface,

@@ -5,6 +5,7 @@
 #include "app_base.hpp"
 #include "file_view.hpp"
 #include "result_handle.hpp"
+#include "selection_controller.hpp"
 #include "storage_service.hpp"
 #include "ui_renderer.hpp"
 
@@ -32,8 +33,10 @@ private:
     bool popup_visible_ = false;
     bool return_from_reader_ = false;
     std::uint16_t restore_page_index_ = 0U;
+    selection_controller selection_;
 
     void handle_action(const ui_action_event& action);
+    void handle_navigation(navigation_action action);
     void handle_storage_status(const app_storage_status_event& event);
     void handle_directory_result(const app_storage_result_event& event);
     void request_directory(const std::string& path);
@@ -45,4 +48,5 @@ private:
         const void* context);
     void build_view(file_view_state& view) const;
     std::uint16_t page_count() const;
+    bool selectable_range(std::size_t& first, std::size_t& end) const;
 };

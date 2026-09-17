@@ -2,6 +2,7 @@ idf_component_register(
     SRCS
         "paper_mono/paper_mono.cpp"
         "paper_mono/paper_mono_battery.cpp"
+        "paper_mono/paper_mono_buttons.cpp"
         "paper_mono/paper_mono_display.cpp"
         "paper_mono/display/epd_otp_driver.cpp"
         "paper_mono/display/epd_otp_transport.cpp"

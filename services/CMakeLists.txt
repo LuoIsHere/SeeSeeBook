@@ -3,6 +3,7 @@ idf_component_register(
         "battery/battery_service.cpp"
         "front_light/front_light_service.cpp"
         "input/input_service.cpp"
+        "input/button_state_machine.cpp"
         "rtc/rtc_service.cpp"
         "storage/storage_service.cpp"
         "storage/storage_file_reader.cpp"

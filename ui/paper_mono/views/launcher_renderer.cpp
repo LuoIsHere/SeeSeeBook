@@ -18,10 +18,11 @@ void draw_launcher_entry(
         return;
     }
     const display_rect rect = launcher_entry_rect(index);
+    const bool active = pressed || state.selected_index == index;
     const display_color background =
-        pressed ? display_color::black : display_color::white;
+        active ? display_color::black : display_color::white;
     const display_color foreground =
-        pressed ? display_color::white : display_color::black;
+        active ? display_color::white : display_color::black;
     surface.fill_rect(rect, background);
     surface.draw_rect(rect, foreground);
     surface.set_text_color(foreground, background);

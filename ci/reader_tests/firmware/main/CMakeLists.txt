@@ -1,7 +1,8 @@
 get_filename_component(ROOT "${CMAKE_CURRENT_LIST_DIR}/../../../.." ABSOLUTE)
 idf_component_register(
-    SRCS "test_main.cpp" "book_tests.cpp" "books_ui_tests.cpp" "epub_tests.cpp" "reader_ui_tests.cpp"
+    SRCS "test_main.cpp" "book_tests.cpp" "books_ui_tests.cpp" "button_navigation_tests.cpp" "epub_tests.cpp" "reader_ui_tests.cpp"
          "gray4_tests.cpp"
+         "${ROOT}/services/input/button_state_machine.cpp"
          "${ROOT}/m5_hal/paper_mono/display/gray4_framebuffer.cpp"
          "${ROOT}/m5_hal/paper_mono/display/gray4_otp_encoding.cpp"
          "${ROOT}/ui/paper_mono/views/reader_renderer.cpp"

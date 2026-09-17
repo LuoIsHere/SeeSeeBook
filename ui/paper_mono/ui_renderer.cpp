@@ -41,6 +41,7 @@ struct region_ghost_debt {
 
 struct ghost_debt {
     region_ghost_debt control;
+    region_ghost_debt focus;
     region_ghost_debt rtc_editor;
     std::uint16_t status_bar = 0U;
     region_ghost_debt test_content;
@@ -153,6 +154,8 @@ region_ghost_debt& debt_for_region(ghost_debt& debt, display_update_region regio
     switch (region) {
         case display_update_region::control:
             return debt.control;
+        case display_update_region::focus:
+            return debt.focus;
         case display_update_region::rtc_editor:
         case display_update_region::rtc_editor_and_key:
             return debt.rtc_editor;
@@ -437,14 +440,101 @@ display_rect content_rect(display_update_region region)
             return {0, 0, UI_DISPLAY_WIDTH, UI_DISPLAY_HEIGHT};
         case display_update_region::control:
             return {0, 0, UI_DISPLAY_WIDTH, FRONT_LIGHT_BAR_HEIGHT};
+        case display_update_region::focus:
+            return {0, 0, 0, 0};
     }
     return {0, 0, UI_DISPLAY_WIDTH, UI_DISPLAY_HEIGHT};
 }
 
-void draw_partial_request(const display_request& request, display_update_region region, display_rect& rect)
+std::uint8_t selected_index(const display_request& request)
+{
+    switch (request.view) {
+        case ui_view_id::launcher:
+            return request.payload.launcher.selected_index;
+        case ui_view_id::books:
+            return request.payload.books.selected_index;
+        case ui_view_id::menu:
+            return request.payload.menu.selected_index;
+        case ui_view_id::file:
+            return request.payload.file.selected_index;
+        default:
+            return UINT8_MAX;
+    }
+}
+
+bool draw_focus_item(
+    const display_request& request,
+    std::uint8_t index,
+    display_rect& rect)
+{
+    switch (request.view) {
+        case ui_view_id::launcher:
+            if (index >= request.payload.launcher.entry_count) { return false; }
+            paper_mono_views::draw_launcher_entry(
+                canvas(), request.payload.launcher, index, false);
+            rect = launcher_entry_rect(index);
+            return true;
+        case ui_view_id::books:
+            if (index >= request.payload.books.item_count) { return false; }
+            paper_mono_views::draw_books_item(
+                canvas(), request.payload.books, index, false);
+            rect = books_item_rect(index);
+            return true;
+        case ui_view_id::menu:
+            if (index >= request.payload.menu.entry_count) { return false; }
+            paper_mono_views::draw_menu_entry(
+                canvas(), request.payload.menu, index, false);
+            rect = menu_entry_rect(index);
+            return true;
+        case ui_view_id::file:
+            if (index >= request.payload.file.row_count) { return false; }
+            paper_mono_views::draw_file_row(
+                canvas(), request.payload.file, index, false);
+            rect = file_row_rect(index);
+            return true;
+        default:
+            return false;
+    }
+}
+
+void draw_focus_request(
+    const display_request& request,
+    const display_request* previous,
+    display_rect& rect)
+{
+    const std::uint8_t next_index = selected_index(request);
+    const std::uint8_t previous_index = previous != nullptr &&
+                                                previous->view == request.view
+                                            ? selected_index(*previous)
+                                            : UINT8_MAX;
+    bool drawn = false;
+    display_rect item = {};
+    if (previous_index != UINT8_MAX &&
+        draw_focus_item(request, previous_index, item)) {
+        rect = item;
+        drawn = true;
+    }
+    if (next_index != UINT8_MAX && next_index != previous_index &&
+        draw_focus_item(request, next_index, item)) {
+        rect = drawn ? merged_rect(rect, item) : item;
+        drawn = true;
+    }
+    if (!drawn) {
+        rect = {0, 0, 0, 0};
+    }
+}
+
+void draw_partial_request(
+    const display_request& request,
+    const display_request* previous,
+    display_update_region region,
+    display_rect& rect)
 {
     rect = content_rect(region);
     switch (region) {
+        case display_update_region::focus:
+            draw_focus_request(request, previous, rect);
+            break;
         case display_update_region::rtc_editor:
         case display_update_region::rtc_editor_and_key:
             paper_mono_views::draw_rtc_editor(canvas(), request.payload.rtc);
@@ -806,6 +896,10 @@ display_update_region resolve_request_region(
     const display_request& next, const display_request* latest, bool has_frame, bool quality_pending)
 {
     if (quality_pending) { return display_update_region::full; }
+    if (next.update_region == display_update_region::focus &&
+        (!has_frame || latest == nullptr || latest->view != next.view)) {
+        return display_update_region::full;
+    }
     if (next.update_region == display_update_region::reader_menu &&
         (!has_frame || latest == nullptr || latest->view != ui_view_id::reader ||
          !reader_body_matches(latest->payload.reader, next.payload.reader))) {
@@ -923,7 +1017,7 @@ void renderer_task(void*)
                 draw_full_view(*next, selected_light, pressed_light);
                 rect = {0, 0, UI_DISPLAY_WIDTH, UI_DISPLAY_HEIGHT};
             } else {
-                draw_partial_request(*next, queued_region, rect);
+                draw_partial_request(*next, latest, queued_region, rect);
             }
             const status_bar_view_state status = status_bar_get_state();
             if (status_refresh_deferred || !status_displayed ||
@@ -1050,6 +1144,10 @@ bool ui_render_launcher(
         return false;
     }
     request->payload.launcher = state;
+    if (reason == ui_update_reason::selection_changed &&
+        request->mode != refresh_mode::quality) {
+        request->update_region = display_update_region::focus;
+    }
     return submit_request(handle, *request);
 }
 
@@ -1081,6 +1179,9 @@ bool ui_render_books(
                    changed_control ==
                        ui_control_type::books_setting_toggle_epub) {
             request->update_region = display_update_region::books_setting_epub;
+        } else if (reason == ui_update_reason::selection_changed &&
+                   changed_control == ui_control_type::books_select_item) {
+            request->update_region = display_update_region::focus;
         }
     }
     return submit_request(handle, *request);
@@ -1094,6 +1195,10 @@ bool ui_render_menu(const menu_view_state& state, ui_update_reason reason)
         return false;
     }
     request->payload.menu = state;
+    if (reason == ui_update_reason::selection_changed &&
+        request->mode != refresh_mode::quality) {
+        request->update_region = display_update_region::focus;
+    }
     return submit_request(handle, *request);
 }
 
@@ -1187,8 +1292,10 @@ bool ui_write_file_frame(
     }
     if (reason != ui_update_reason::view_opened &&
         request->mode != refresh_mode::quality) {
-        request->mode = refresh_mode::text;
-        request->update_region = display_update_region::file_content;
+        const bool focus_changed = reason == ui_update_reason::selection_changed;
+        request->mode = focus_changed ? refresh_mode::fastest : refresh_mode::text;
+        request->update_region = focus_changed ? display_update_region::focus
+                                               : display_update_region::file_content;
     }
     return submit_request(handle, *request);
 }

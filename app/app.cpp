@@ -85,6 +85,14 @@ void app_update()
 
 void app_dispatch_event(const app_event& event)
 {
+    if (event.type == app_event_type::navigation &&
+        event.navigation.action == navigation_action::back) {
+        if (!has_pending_switch && foreground_record != nullptr &&
+            foreground_kind != app_kind::launcher) {
+            app_request_back();
+        }
+        return;
+    }
     if (!has_pending_switch && foreground_record != nullptr) {
         foreground_record->instance->handle_app_event(event);
     }

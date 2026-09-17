@@ -7,6 +7,7 @@
 #include "books_model.hpp"
 #include "books_view.hpp"
 #include "storage_service.hpp"
+#include "selection_controller.hpp"
 #include "ui_renderer.hpp"
 
 class books_app final : public app_base {
@@ -37,6 +38,7 @@ private:
     bool reader_launch_pending_ = false;
     char reader_path_[BOOK_PATH_CAPACITY] = {};
     book_file_format reader_format_ = book_file_format::unknown;
+    selection_controller selection_;
 
     struct cover_request_state {
         char path[STORAGE_MAX_PATH_LENGTH + 1U] = {};
@@ -49,6 +51,7 @@ private:
     } cover_request_;
 
     void handle_action(const ui_action_event& action);
+    void handle_navigation(navigation_action action);
     void handle_storage_status(const app_storage_status_event& event);
     void handle_storage_result(const result_handle& handle);
     void refresh_catalog(bool render);

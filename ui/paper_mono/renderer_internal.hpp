@@ -33,6 +33,7 @@
 enum class display_update_region : std::uint8_t {
     full,
     control,
+    focus,
     rtc_editor,
     rtc_editor_and_key,
     status_bar,

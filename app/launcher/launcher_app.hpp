@@ -2,6 +2,7 @@
 
 #include "app_base.hpp"
 #include "launcher_view.hpp"
+#include "selection_controller.hpp"
 
 class launcher_app final : public app_base {
 public:
@@ -12,4 +13,8 @@ protected:
 
 private:
     launcher_view_state view_ = {};
+    selection_controller selection_;
+
+    void activate_entry(std::uint8_t index);
+    void handle_navigation(navigation_action action);
 };

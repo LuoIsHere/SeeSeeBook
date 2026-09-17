@@ -7,6 +7,7 @@
 The test sources cover:
 
 - `firmware/main/test_main.cpp`: Launcher/Books/Menu back-stack navigation, App switching and generic launch data, BookCatalogService discovery and persistence, Books/Reader integration, TXT and EPUB Reader flows, progress restore, cover page navigation, SD-card lifecycle, request timeout handling, and frame ownership.
+- `firmware/main/button_navigation_tests.cpp`: physical-button debounce, short/long press mapping, overlap lockout, and selection wrapping.
 - `firmware/main/books_ui_tests.cpp`: first-level and secondary entry descriptors, catalog scan filtering and sorting, Books three-column layout and pagination, settings transaction state, modal input capture, TXT preview, and two-line filename formatting.
 - `firmware/main/book_tests.cpp`: book format detection, progress records, page-index records, index construction, and stale-record rejection.
 - `firmware/main/epub_tests.cpp`: EPUB ZIP/container/OPF parsing, spine text extraction, cover extraction, cache generation, limits, and invalid or unsupported input handling.
@@ -47,6 +48,7 @@ The runner generates `firmware/build/`, `firmware/sdkconfig`, `test_build.log`, 
 测试源码的职责如下：
 
 - `firmware/main/test_main.cpp`：测试 Launcher/Books/Menu 返回栈、App 切换和通用启动参数、BookCatalogService 发现与持久化、Books/Reader 集成、TXT/EPUB 阅读流程、进度恢复、封面第 0 页导航、SD 卡生命周期、请求超时和帧所有权。
+- `firmware/main/button_navigation_tests.cpp`：测试实体按键消抖、短按/长按映射、双键冲突锁定和选择循环。
 - `firmware/main/books_ui_tests.cpp`：测试一级与二级入口 descriptor、catalog 扫描过滤和排序、Books 三列布局与分页、设置事务状态、modal 输入截获、TXT 预览和两行文件名格式化。
 - `firmware/main/book_tests.cpp`：测试书籍格式识别、进度记录、页索引记录、索引构建和过期记录拒绝。
 - `firmware/main/epub_tests.cpp`：测试 EPUB ZIP/container/OPF 解析、spine 正文提取、封面提取、缓存生成、资源限制以及非法或不支持输入的处理。

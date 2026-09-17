@@ -34,6 +34,9 @@ books_preview_view_state preview_view_state(book_catalog_preview_state state)
 void books_app::handle_app_event(const app_event& event)
 {
     switch (event.type) {
+        case app_event_type::navigation:
+            handle_navigation(event.navigation.action);
+            break;
         case app_event_type::ui_action:
             handle_action(event.action);
             break;
@@ -50,6 +53,7 @@ void books_app::handle_app_event(const app_event& event)
 
 void books_app::on_open()
 {
+    selection_.clear();
     settings_.cancel();
     media_generation_ = storage_service_get_media_generation();
     book_catalog_service_activate(media_generation_);
@@ -101,6 +105,7 @@ void books_app::on_running()
 
 void books_app::on_close()
 {
+    selection_.clear();
     settings_.cancel();
     cancel_cover_request();
     book_catalog_service_pause();
@@ -156,6 +161,7 @@ void books_app::handle_action(const ui_action_event& action)
             break;
         case ui_control_type::books_page_previous:
             if (page_index_ > 0U) {
+                selection_.clear();
                 --page_index_;
                 load_page(true);
                 submit_frame(ui_update_reason::content_changed);
@@ -164,6 +170,7 @@ void books_app::handle_action(const ui_action_event& action)
             break;
         case ui_control_type::books_page_next:
             if (page_index_ + 1U < page_count_) {
+                selection_.clear();
                 ++page_index_;
                 load_page(true);
                 submit_frame(ui_update_reason::content_changed);
@@ -178,6 +185,47 @@ void books_app::handle_action(const ui_action_event& action)
     }
 }
 
+void books_app::handle_navigation(navigation_action action)
+{
+    if (settings_.visible() || reader_launch_pending_) {
+        return;
+    }
+    if (action == navigation_action::confirm) {
+        if (!selection_.selected(0U, total_items_)) {
+            return;
+        }
+        const std::size_t first = books_page_first_item(page_index_);
+        const std::size_t selected = selection_.index();
+        if (selected >= first && selected < first + page_item_count_) {
+            request_reader(static_cast<std::uint8_t>(selected - first));
+        }
+        return;
+    }
+
+    bool moved = false;
+    if (action == navigation_action::previous) {
+        moved = selection_.move_previous(0U, total_items_);
+    } else if (action == navigation_action::next) {
+        moved = selection_.move_next(0U, total_items_);
+    }
+    if (!moved) {
+        return;
+    }
+
+    const std::uint16_t selected_page = static_cast<std::uint16_t>(
+        selection_.index() / BOOK_CATALOG_PAGE_CAPACITY);
+    if (selected_page != page_index_) {
+        page_index_ = selected_page;
+        load_page(true);
+        submit_frame(ui_update_reason::content_changed);
+        start_next_cover();
+    } else {
+        submit_frame(
+            ui_update_reason::selection_changed,
+            ui_control_type::books_select_item);
+    }
+}
+
 void books_app::handle_storage_status(const app_storage_status_event& event)
 {
     if (event.media_generation == media_generation_ &&
@@ -185,6 +233,7 @@ void books_app::handle_storage_status(const app_storage_status_event& event)
         catalog_state_ = book_catalog_state::unavailable;
     }
     if (event.media_generation != media_generation_ || event.state == storage_state::ready) {
+        selection_.clear();
         media_generation_ = event.media_generation;
         page_index_ = 0U;
         cancel_cover_request();
@@ -193,6 +242,7 @@ void books_app::handle_storage_status(const app_storage_status_event& event)
         book_catalog_service_activate(media_generation_);
         refresh_catalog(true);
     } else if (event.state != storage_state::ready) {
+        selection_.clear();
         total_items_ = page_item_count_ = page_count_ = 0U;
         std::memset(page_items_, 0, sizeof(page_items_));
         ui_books_cover_clear();
@@ -202,6 +252,7 @@ void books_app::handle_storage_status(const app_storage_status_event& event)
 
 void books_app::refresh_catalog(bool render)
 {
+    selection_.clear();
     book_catalog_snapshot snapshot = {};
     if (!book_catalog_service_snapshot(snapshot) ||
         snapshot.media_generation != media_generation_) {
@@ -393,6 +444,11 @@ books_view_state books_app::build_view() const
     view.page_index = page_index_;
     view.page_count = page_count_;
     view.item_count = page_item_count_;
+    const std::size_t first_item = books_page_first_item(page_index_);
+    if (selection_.selected(first_item, first_item + page_item_count_)) {
+        view.selected_index = static_cast<std::uint8_t>(
+            selection_.index() - first_item);
+    }
     view.settings_visible = settings_.visible();
     view.pending_settings.auto_scan_txt = settings_.pending().auto_scan_txt;
     view.pending_settings.auto_scan_epub = settings_.pending().auto_scan_epub;

@@ -47,6 +47,7 @@ void test_epub_support();
 void test_reader_rendering();
 void test_gray4_support();
 void test_books_ui_support();
+void test_button_navigation();
 std::string make_epub_fixture(bool cover, char filler);
 
 #define CHECK(condition) do { if (!(condition)) { \
@@ -215,6 +216,15 @@ void reader_back()
     if (!shown()->payload.reader.menu_visible) { click(240, 360); }
     CHECK(shown()->payload.reader.menu_visible);
     click(80, 40);
+}
+
+void navigate(navigation_action action)
+{
+    app_event event = {};
+    event.type = app_event_type::navigation;
+    event.navigation.action = action;
+    app_dispatch_event(event);
+    pump();
 }
 
 void ignored_reader_click(int x, int y, int end_x = -1, int end_y = -1)
@@ -567,7 +577,22 @@ void test_app_navigation()
     CHECK(std::strcmp(ui_status_bar_get_state().center_text, "Context") == 0);
     CHECK(ui_status_bar_clear_center());
     CHECK(ui_status_bar_get_state().center_kind == status_bar_center_kind::none);
-    std::puts("PASS App navigation: Launcher -> Books -> back, Launcher -> Menu -> child -> back");
+
+    navigate(navigation_action::next);
+    CHECK(shown()->payload.launcher.selected_index == 0U);
+    navigate(navigation_action::previous);
+    CHECK(shown()->payload.launcher.selected_index == 2U);
+    navigate(navigation_action::confirm);
+    wait_view(ui_view_id::menu);
+    navigate(navigation_action::next);
+    CHECK(shown()->payload.menu.selected_index == 0U);
+    navigate(navigation_action::confirm);
+    wait_view(ui_view_id::test);
+    navigate(navigation_action::back);
+    wait_view(ui_view_id::menu);
+    navigate(navigation_action::back);
+    wait_view(ui_view_id::launcher);
+    std::puts("PASS App navigation: touch and physical selection, confirm, back stack");
 }
 
 void test_catalog_service_persistence()
@@ -632,8 +657,9 @@ void test_books_reader_return()
                shown()->payload.books.item_count == 1U &&
                shown()->payload.books.page_count == 1U;
     });
-    const auto item = books_item_rect(0U);
-    click(item.left + item.width / 2, item.top + item.height / 2);
+    navigate(navigation_action::next);
+    CHECK(shown()->payload.books.selected_index == 0U);
+    navigate(navigation_action::confirm);
     wait_reader(reader_view_status::ready);
     CHECK(shown()->payload.reader.page.current_page_start_offset > 0U);
     reader_back();
@@ -676,15 +702,21 @@ void test_reader_flow()
     test_catalog_service_persistence();
     app_request_switch(app_kind::file);
     wait_file("/");
-    click(80, 240); // root row 1: books directory
+    navigate(navigation_action::next);
+    CHECK(shown()->payload.file.selected_index == 1U);
+    navigate(navigation_action::confirm); // root row 1: books directory
     wait_file("/books");
-    click(80, 240); // row 1: book.TXT
+    navigate(navigation_action::next);
+    CHECK(shown()->payload.file.selected_index == 0U); // parent entry
+    navigate(navigation_action::next);
+    CHECK(shown()->payload.file.selected_index == 1U);
+    navigate(navigation_action::confirm); // row 1: book.TXT
     wait_reader(reader_view_status::ready);
     CHECK(shown()->payload.reader.page.current_page_start_offset == 0);
     test_reader_menu();
     auto feedback_before = control_feedback;
     auto frames_before = frame_submissions;
-    click(400, 360);
+    navigate(navigation_action::next);
     wait_changed(0);
     CHECK(control_feedback == feedback_before);
     CHECK(frame_submissions >= frames_before + 1); // index readiness can also update persistence state
@@ -933,7 +965,7 @@ void test_epub_reader_flow()
         return ui_status_bar_get_state().center_kind ==
                status_bar_center_kind::page;
     });
-    click(80, 360);
+    navigate(navigation_action::previous);
     until([] { return shown()->view == ui_view_id::reader &&
                       shown()->payload.reader.status == reader_view_status::ready &&
                       shown()->payload.reader.showing_cover; });
@@ -1196,6 +1228,7 @@ extern "C" void app_main()
         unsigned(sizeof(reader_app)), unsigned(sizeof(reader_page)), unsigned(sizeof(reader_view_state)),
         unsigned(sizeof(display_request)), unsigned(sizeof(storage_file_chunk_result)));
     test_launch_context();
+    test_button_navigation();
     test_reader_rendering();
     test_gray4_support();
     test_books_ui_support();

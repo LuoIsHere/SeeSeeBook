@@ -30,6 +30,11 @@ void draw_books_view(
 void draw_books_content(
     display_surface& surface,
     const books_view_state& state);
+void draw_books_item(
+    display_surface& surface,
+    const books_view_state& state,
+    std::uint8_t index,
+    bool pressed = false);
 void draw_books_setting_row(
     display_surface& surface,
     const books_view_state& state,

@@ -53,7 +53,8 @@ void draw_file_row(
     }
     const display_rect rect = file_row_rect(index);
     const file_row_view_state& row = state.rows[index];
-    const bool active_pressed = pressed && row.enabled;
+    const bool active_pressed =
+        (pressed || state.selected_index == index) && row.enabled;
     const display_color background =
         active_pressed ? display_color::black : display_color::white;
     const display_color foreground =

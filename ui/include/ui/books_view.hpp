@@ -11,6 +11,7 @@ inline constexpr std::size_t books_file_name_line_count = 2U;
 inline constexpr std::size_t books_file_name_line_capacity = 40U;
 inline constexpr std::size_t books_preview_line_count = 6U;
 inline constexpr std::size_t books_preview_line_capacity = 40U;
+inline constexpr std::uint8_t books_no_selection = UINT8_MAX;
 
 struct books_file_name_view_state {
     char lines[books_file_name_line_count][books_file_name_line_capacity];
@@ -46,6 +47,7 @@ struct books_view_state {
     std::uint16_t page_index;
     std::uint16_t page_count;
     std::uint8_t item_count;
+    std::uint8_t selected_index = books_no_selection;
     bool settings_visible;
     bool catalog_busy;
     bool catalog_error;

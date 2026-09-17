@@ -16,6 +16,13 @@ namespace {
 
 bool collect_one_event(app_event& event)
 {
+    navigation_event navigation = {};
+    if (input_service_try_get_navigation_event(navigation)) {
+        event.type = app_event_type::navigation;
+        event.navigation = navigation;
+        return true;
+    }
+
     input_event input = {};
     if (input_service_try_get_event(input)) {
         ui_action_event action = {};

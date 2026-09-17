@@ -7,6 +7,8 @@
 
 #include "system_config.hpp"
 #include "system_tick_service.hpp"
+#include "button_state_machine.hpp"
+#include "buttons.hpp"
 #include "touch.hpp"
 
 namespace {
@@ -31,6 +33,7 @@ struct input_context {
 };
 
 QueueHandle_t event_queue = nullptr;
+QueueHandle_t navigation_queue = nullptr;
 TaskHandle_t input_task_handle = nullptr;
 
 const char* gesture_name(input_gesture_type gesture)
@@ -136,14 +139,52 @@ void update_state(
     }
 }
 
+const char* navigation_name(navigation_action action)
+{
+    switch (action) {
+        case navigation_action::previous:
+            return "previous";
+        case navigation_action::next:
+            return "next";
+        case navigation_action::confirm:
+            return "confirm";
+        case navigation_action::back:
+            return "back";
+    }
+    return "unknown";
+}
+
+void publish_navigation_event(const navigation_event& event)
+{
+    if (xQueueSend(navigation_queue, &event, 0) != pdTRUE) {
+        navigation_event discarded = {};
+        xQueueReceive(navigation_queue, &discarded, 0);
+        xQueueSend(navigation_queue, &event, 0);
+        ESP_LOGW(log_tag, "navigation queue full; oldest event discarded");
+    }
+    ESP_LOGI(
+        log_tag,
+        "button action=%s timestamp_ms=%lu",
+        navigation_name(event.action),
+        static_cast<unsigned long>(event.timestamp_ms));
+}
+
 void input_task(void*)
 {
-    input_context context;
+    input_context touch_context;
+    button_state_machine buttons;
     for (;;) {
         ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
-        touch_sample sample = {};
-        if (hal_touch_sample(sample)) {
-            update_state(context, sample, system_tick_now_ms());
+        const std::uint32_t now_ms = system_tick_now_ms();
+        touch_sample touch = {};
+        if (hal_touch_sample(touch)) {
+            update_state(touch_context, touch, now_ms);
+        }
+        button_sample button = {};
+        navigation_event navigation = {};
+        if (hal_buttons_sample(button) &&
+            buttons.update(button, now_ms, navigation)) {
+            publish_navigation_event(navigation);
         }
     }
 }
@@ -156,6 +197,11 @@ esp_err_t input_service_init()
     if (event_queue == nullptr) {
         return ESP_ERR_NO_MEM;
     }
+    navigation_queue = xQueueCreate(
+        BUTTON_EVENT_QUEUE_LENGTH, sizeof(navigation_event));
+    if (navigation_queue == nullptr) {
+        return ESP_ERR_NO_MEM;
+    }
     if (xTaskCreate(
             input_task,
             "input_service",
@@ -165,14 +211,20 @@ esp_err_t input_service_init()
             &input_task_handle) != pdPASS) {
         return ESP_ERR_NO_MEM;
     }
-    if (!system_tick_service_register_task(input_task_handle, TOUCH_SCAN_PERIOD_MS)) {
+    if (!system_tick_service_register_task(input_task_handle, INPUT_SCAN_PERIOD_MS)) {
         return ESP_ERR_INVALID_STATE;
     }
-    ESP_LOGI(log_tag, "input state machine started period_ms=%u", TOUCH_SCAN_PERIOD_MS);
+    ESP_LOGI(log_tag, "input state machines started period_ms=%u", INPUT_SCAN_PERIOD_MS);
     return ESP_OK;
 }
 
 bool input_service_try_get_event(input_event& event)
 {
     return event_queue != nullptr && xQueueReceive(event_queue, &event, 0) == pdTRUE;
+}
+
+bool input_service_try_get_navigation_event(navigation_event& event)
+{
+    return navigation_queue != nullptr &&
+           xQueueReceive(navigation_queue, &event, 0) == pdTRUE;
 }

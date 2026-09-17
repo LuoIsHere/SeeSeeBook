@@ -72,6 +72,9 @@ file_view_status view_status(storage_state state)
 void file_app::handle_app_event(const app_event& event)
 {
     switch (event.type) {
+        case app_event_type::navigation:
+            handle_navigation(event.navigation.action);
+            break;
         case app_event_type::ui_action:
             handle_action(event.action);
             break;
@@ -91,6 +94,7 @@ void file_app::handle_app_event(const app_event& event)
 
 void file_app::on_open()
 {
+    selection_.clear();
     ++session_id_;
     release_directory_result();
     if (!return_from_reader_) {
@@ -118,6 +122,7 @@ void file_app::on_running()
 
 void file_app::on_close()
 {
+    selection_.clear();
     ++session_id_;
     release_directory_result();
     if (!return_from_reader_) {
@@ -139,13 +144,54 @@ void file_app::handle_action(const ui_action_event& action)
     } else if (action.control == ui_control_type::file_row) {
         activate_row(action.index);
     } else if (action.control == ui_control_type::file_previous_page && page_index_ > 0U) {
+        selection_.clear();
         --page_index_;
         submit_frame(ui_update_reason::content_changed);
     } else if (action.control == ui_control_type::file_next_page &&
                page_index_ + 1U < page_count()) {
+        selection_.clear();
         ++page_index_;
         submit_frame(ui_update_reason::content_changed);
     }
+}
+
+void file_app::handle_navigation(navigation_action action)
+{
+    std::size_t first = 0U;
+    std::size_t end = 0U;
+    if (!selectable_range(first, end)) {
+        selection_.clear();
+        return;
+    }
+    if (action == navigation_action::confirm) {
+        if (!selection_.selected(first, end)) {
+            return;
+        }
+        const std::size_t selected = selection_.index();
+        const std::size_t page_first =
+            static_cast<std::size_t>(page_index_) * FILE_VIEW_ROW_COUNT;
+        if (selected >= page_first && selected < page_first + FILE_VIEW_ROW_COUNT) {
+            activate_row(static_cast<std::uint8_t>(selected - page_first));
+        }
+        return;
+    }
+
+    bool moved = false;
+    if (action == navigation_action::previous) {
+        moved = selection_.move_previous(first, end);
+    } else if (action == navigation_action::next) {
+        moved = selection_.move_next(first, end);
+    }
+    if (!moved) {
+        return;
+    }
+    const std::uint16_t selected_page = static_cast<std::uint16_t>(
+        selection_.index() / FILE_VIEW_ROW_COUNT);
+    const ui_update_reason reason = selected_page == page_index_
+                                        ? ui_update_reason::selection_changed
+                                        : ui_update_reason::content_changed;
+    page_index_ = selected_page;
+    submit_frame(reason);
 }
 
 void file_app::handle_storage_status(const app_storage_status_event& event)
@@ -155,6 +201,7 @@ void file_app::handle_storage_status(const app_storage_status_event& event)
         return;
     }
     return_from_reader_ = false;
+    selection_.clear();
     restore_page_index_ = 0U;
     requested_generation_ = event.media_generation;
     release_directory_result();
@@ -207,6 +254,7 @@ void file_app::handle_directory_result(const app_storage_result_event& event)
                 break;
         }
     }
+    selection_.clear();
     page_index_ = std::min<std::uint16_t>(restore_page_index_, page_count() - 1U);
     restore_page_index_ = 0U;
     return_from_reader_ = false;
@@ -215,6 +263,7 @@ void file_app::handle_directory_result(const app_storage_result_event& event)
 
 void file_app::request_directory(const std::string& path)
 {
+    selection_.clear();
     ++request_id_;
     requested_generation_ = storage_service_get_media_generation();
     release_directory_result();
@@ -328,6 +377,9 @@ void file_app::build_view(file_view_state& view) const
         return;
     }
     const std::size_t first = static_cast<std::size_t>(page_index_) * FILE_VIEW_ROW_COUNT;
+    if (selection_.selected(first, first + FILE_VIEW_ROW_COUNT)) {
+        view.selected_index = static_cast<std::uint8_t>(selection_.index() - first);
+    }
     const std::size_t total = result->entries.size() + 1U;
     for (std::size_t item = first;
          item < total && view.row_count < FILE_VIEW_ROW_COUNT;
@@ -358,4 +410,16 @@ std::uint16_t file_app::page_count() const
     const std::size_t total = entry_count + 1U;
     return static_cast<std::uint16_t>(
         std::max<std::size_t>(1U, (total + FILE_VIEW_ROW_COUNT - 1U) / FILE_VIEW_ROW_COUNT));
+}
+
+bool file_app::selectable_range(std::size_t& first, std::size_t& end) const
+{
+    const storage_directory_result* result = nullptr;
+    if (status_ != file_view_status::ready ||
+        !storage_service_resolve_result(directory_handle_, result) || result == nullptr) {
+        return false;
+    }
+    first = current_path_ == "/" ? 1U : 0U;
+    end = result->entries.size() + 1U;
+    return first < end;
 }

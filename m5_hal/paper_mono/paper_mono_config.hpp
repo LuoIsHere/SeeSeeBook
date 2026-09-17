@@ -4,6 +4,10 @@
 #define PAPER_MONO_DISPLAY_WIDTH 480U
 #define PAPER_MONO_DISPLAY_HEIGHT 800U
 
+// Built-in active-low side buttons, configured as inputs by M5Unified.
+#define PAPER_MONO_KEY1_GPIO 2
+#define PAPER_MONO_KEY2_GPIO 3
+
 // Native SSD1677 framebuffer geometry used by the manufacturer OTP example.
 #define PAPER_MONO_EPD_NATIVE_WIDTH 800U
 #define PAPER_MONO_EPD_NATIVE_HEIGHT 480U

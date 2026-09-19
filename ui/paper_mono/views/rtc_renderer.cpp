@@ -1,5 +1,6 @@
 #include "view_renderer.hpp"
 
+#include "design.hpp"
 #include "layout.hpp"
 #include "renderer_helpers.hpp"
 
@@ -88,12 +89,10 @@ void draw_rtc_field(
     }
     const display_rect rect = rtc_field_rect(field);
     const bool selected = state.selected_field == field;
-    surface.fill_rect(
-        rect,
-        selected ? display_color::black : display_color::white);
-    surface.set_text_color(
-        selected ? display_color::white : display_color::black,
-        selected ? display_color::black : display_color::white);
+    draw_control_surface(
+        surface, rect, selected, false, true, true,
+        paper_ui::radius_small);
+    surface.set_text_color(display_color::black, display_color::white);
     surface.set_text_alignment(display_text_alignment::middle_center);
     surface.set_text_size(RTC_FIELD_TEXT_SIZE);
     surface.draw_text(text, rect.left + rect.width / 2, rect.top + rect.height / 2);
@@ -148,17 +147,11 @@ void draw_rtc_key(
     }
     const display_rect rect = rtc_key_rect(index);
     const bool active_pressed = pressed && enabled;
-    const display_color background =
-        active_pressed ? display_color::black : display_color::white;
-    const display_color foreground =
-        active_pressed ? display_color::white : display_color::black;
-    draw_action_background(surface, rect, active_pressed, enabled);
-    surface.draw_horizontal_line(rect.left, rect.top, rect.width, display_color::black);
-    surface.draw_horizontal_line(
-        rect.left,
-        rect.top + rect.height - 1,
-        rect.width,
-        display_color::black);
+    const display_color background = control_background(active_pressed, enabled);
+    const display_color foreground = control_foreground(active_pressed, enabled);
+    draw_control_surface(
+        surface, rect, false, active_pressed, enabled, true,
+        paper_ui::radius_control);
     const std::int32_t center_x = rect.left + rect.width / 2;
     const std::int32_t center_y = rect.top + rect.height / 2;
     surface.set_text_color(foreground, background);

@@ -44,7 +44,7 @@ text_layout_profile ui_file_name_text_layout()
 text_layout_profile ui_books_file_name_text_layout()
 {
     return {
-        BOOKS_GRID_CELL_WIDTH,
+        static_cast<std::uint16_t>(BOOKS_FILE_NAME_TEXT_WIDTH),
         books_file_name_line_count,
         glyph_width,
     };

@@ -3,6 +3,7 @@
 #include <cstdint>
 
 #include "display.hpp"
+#include "design.hpp"
 #include "file_view.hpp"
 #include "geometry.hpp"
 #include "launcher_view.hpp"
@@ -12,34 +13,35 @@
 #define UI_DISPLAY_WIDTH 480
 #define UI_DISPLAY_HEIGHT 800
 
-#define MENU_SCREEN_EDGE_MARGIN 32
-#define MENU_TITLE_CENTER_Y 96
-#define MENU_TITLE_TEXT_SIZE 4U
-#define MENU_ENTRY_TOP 190
-#define MENU_ENTRY_HEIGHT 96
-#define MENU_ENTRY_TEXT_SIZE 3U
+#define MENU_SCREEN_EDGE_MARGIN paper_ui::page_margin
+#define MENU_TITLE_CENTER_Y 48
+#define MENU_TITLE_TEXT_SIZE paper_ui::text_title
+#define MENU_ENTRY_TOP 144
+#define MENU_ENTRY_HEIGHT 88
+#define MENU_ENTRY_GAP paper_ui::space_sm
+#define MENU_ENTRY_TEXT_SIZE paper_ui::text_title
 
-#define LAUNCHER_TITLE_CENTER_Y 112
-#define LAUNCHER_TITLE_TEXT_SIZE 4U
-#define LAUNCHER_ENTRY_LEFT 36
-#define LAUNCHER_ENTRY_TOP 238
+#define LAUNCHER_TITLE_CENTER_Y 104
+#define LAUNCHER_TITLE_TEXT_SIZE paper_ui::text_display
+#define LAUNCHER_ENTRY_LEFT 32
+#define LAUNCHER_ENTRY_TOP 216
 #define LAUNCHER_ENTRY_WIDTH (UI_DISPLAY_WIDTH - LAUNCHER_ENTRY_LEFT * 2)
-#define LAUNCHER_ENTRY_HEIGHT 112
-#define LAUNCHER_ENTRY_GAP 32
-#define LAUNCHER_ENTRY_TEXT_SIZE 3U
+#define LAUNCHER_ENTRY_HEIGHT 96
+#define LAUNCHER_ENTRY_GAP paper_ui::space_xl
+#define LAUNCHER_ENTRY_TEXT_SIZE paper_ui::text_title
 
 static_assert(menu_view_entry_capacity == 5U);
 
-#define RTC_BACK_BUTTON_LEFT 20
-#define RTC_BACK_BUTTON_TOP 20
-#define RTC_TITLE_CENTER_Y 44
-#define RTC_TITLE_TEXT_SIZE 2U
+#define RTC_BACK_BUTTON_LEFT paper_ui::space_lg
+#define RTC_BACK_BUTTON_TOP paper_ui::space_lg
+#define RTC_TITLE_CENTER_Y 48
+#define RTC_TITLE_TEXT_SIZE paper_ui::text_title
 #define RTC_DATE_FIELD_TOP 104
 #define RTC_TIME_FIELD_TOP 184
 #define RTC_FIELD_HEIGHT 48
 #define RTC_FIELD_TEXT_SIZE 3U
 #define RTC_MESSAGE_CENTER_Y 292
-#define RTC_MESSAGE_TEXT_SIZE 2U
+#define RTC_MESSAGE_TEXT_SIZE paper_ui::text_body
 #define RTC_EDITOR_REGION_TOP 88
 #define RTC_EDITOR_REGION_HEIGHT 232
 #define RTC_KEYPAD_LEFT 36
@@ -48,38 +50,38 @@ static_assert(menu_view_entry_capacity == 5U);
 #define RTC_KEY_HEIGHT 72
 #define RTC_KEY_COLUMN_GAP 24
 #define RTC_KEY_ROW_GAP 16
-#define RTC_KEY_TEXT_SIZE 3U
+#define RTC_KEY_TEXT_SIZE paper_ui::text_title
 #define RTC_KEY_COUNT 12U
 
 #define STATUS_BAR_TOP 760
 #define STATUS_BAR_HEIGHT 40
-#define STATUS_BAR_LEFT_MARGIN 16
-#define STATUS_BAR_RIGHT_MARGIN 12
-#define STATUS_BAR_TEXT_SIZE 2U
+#define STATUS_BAR_LEFT_MARGIN paper_ui::space_lg
+#define STATUS_BAR_RIGHT_MARGIN paper_ui::space_lg
+#define STATUS_BAR_TEXT_SIZE paper_ui::text_body
 #define STATUS_BATTERY_PERCENT_MAX_WIDTH 52
 #define STATUS_CHARGING_ICON_WIDTH 28
 #define STATUS_BAR_IDLE_REFRESH_INTERVAL_MS 60000U
 
 #define APP_BACK_BUTTON_WIDTH 104
 #define APP_BACK_BUTTON_HEIGHT 48
-#define APP_BACK_BUTTON_TEXT_SIZE 2U
+#define APP_BACK_BUTTON_TEXT_SIZE paper_ui::text_body
 #define TEST_BACK_BUTTON_LEFT 20
 #define TEST_BACK_BUTTON_TOP 88
 #define TEST_CONTENT_REGION_TOP 152
 #define TEST_CONTENT_REGION_HEIGHT (STATUS_BAR_TOP - TEST_CONTENT_REGION_TOP)
 
 #define BATTERY_TITLE_CENTER_Y 48
-#define BATTERY_TITLE_TEXT_SIZE 3U
+#define BATTERY_TITLE_TEXT_SIZE paper_ui::text_title
 #define BATTERY_CONTENT_REGION_TOP 96
 #define BATTERY_CONTENT_REGION_HEIGHT (STATUS_BAR_TOP - BATTERY_CONTENT_REGION_TOP)
 #define BATTERY_LABEL_LEFT 48
 #define BATTERY_VALUE_RIGHT 432
 #define BATTERY_FIRST_ROW_CENTER_Y 190
 #define BATTERY_ROW_HEIGHT 72
-#define BATTERY_ROW_TEXT_SIZE 2U
+#define BATTERY_ROW_TEXT_SIZE paper_ui::text_body
 
 #define FILE_TITLE_CENTER_Y 48
-#define FILE_TITLE_TEXT_SIZE 3U
+#define FILE_TITLE_TEXT_SIZE paper_ui::text_title
 #define FILE_PATH_LEFT 24
 #define FILE_PATH_TOP 88
 #define FILE_PATH_HEIGHT 56
@@ -96,12 +98,12 @@ static_assert(menu_view_entry_capacity == 5U);
 #define FILE_PAGINATION_HEIGHT 92
 #define FILE_PAGE_BUTTON_WIDTH 96
 #define FILE_PAGE_BUTTON_TEXT_SIZE 3U
-#define FILE_PAGE_LABEL_TEXT_SIZE 2U
+#define FILE_PAGE_LABEL_TEXT_SIZE paper_ui::text_body
 #define FILE_POPUP_LEFT 48
 #define FILE_POPUP_TOP 304
 #define FILE_POPUP_WIDTH 384
 #define FILE_POPUP_HEIGHT 112
-#define FILE_POPUP_TEXT_SIZE 2U
+#define FILE_POPUP_TEXT_SIZE paper_ui::text_body
 
 static_assert(FILE_ROW_COUNT == FILE_VIEW_ROW_COUNT);
 
@@ -178,7 +180,8 @@ constexpr display_rect menu_entry_rect(std::uint8_t index)
 {
     return {
         MENU_SCREEN_EDGE_MARGIN,
-        static_cast<std::int16_t>(MENU_ENTRY_TOP + index * MENU_ENTRY_HEIGHT),
+        static_cast<std::int16_t>(
+            MENU_ENTRY_TOP + index * (MENU_ENTRY_HEIGHT + MENU_ENTRY_GAP)),
         static_cast<std::int16_t>(UI_DISPLAY_WIDTH - MENU_SCREEN_EDGE_MARGIN * 2),
         MENU_ENTRY_HEIGHT,
     };

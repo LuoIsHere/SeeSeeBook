@@ -227,6 +227,27 @@ void navigate(navigation_action action)
     pump();
 }
 
+void cancelled_click(int start_x, int start_y, int end_x, int end_y)
+{
+    input_event input{};
+    input.start_x = start_x;
+    input.start_y = start_y;
+    input.end_x = start_x;
+    input.end_y = start_y;
+    input.gesture = input_gesture_type::press;
+    ui_action_event action{};
+    CHECK(ui_interaction_process(input, action));
+    app_event event{};
+    event.type = app_event_type::ui_action;
+    event.action = action;
+    app_dispatch_event(event);
+    input.end_x = end_x;
+    input.end_y = end_y;
+    input.gesture = input_gesture_type::click;
+    CHECK(!ui_interaction_process(input, action));
+    pump();
+}
+
 void ignored_reader_click(int x, int y, int end_x = -1, int end_y = -1)
 {
     input_event input{};
@@ -658,6 +679,14 @@ void test_books_reader_return()
                shown()->payload.books.page_count == 1U;
     });
     navigate(navigation_action::next);
+    CHECK(shown()->payload.books.selected_index == 0U);
+    const display_rect selected_book = books_item_hit_rect(0U);
+    cancelled_click(
+        selected_book.left + selected_book.width / 2,
+        selected_book.top + selected_book.height / 2,
+        UI_DISPLAY_WIDTH / 2,
+        BOOKS_PAGER_TOP - 4);
+    CHECK(shown()->view == ui_view_id::books);
     CHECK(shown()->payload.books.selected_index == 0U);
     navigate(navigation_action::confirm);
     wait_reader(reader_view_status::ready);

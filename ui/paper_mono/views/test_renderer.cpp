@@ -2,6 +2,7 @@
 
 #include <cstdio>
 
+#include "design.hpp"
 #include "layout.hpp"
 #include "renderer_helpers.hpp"
 
@@ -26,28 +27,31 @@ void draw_front_light_bar(
     surface.set_text_size(2U);
     for (std::uint8_t index = 0U; index < FRONT_LIGHT_LEVEL_COUNT; ++index) {
         const display_rect rect = front_light_button_rect(index);
+        const display_rect visual = inset_rect(rect, paper_ui::space_xs);
         const bool is_pressed = pressed == static_cast<std::int16_t>(index);
-        surface.fill_rect(
-            rect,
-            is_pressed ? display_color::black : display_color::white);
-        if (!is_pressed) {
-            surface.draw_rect(rect, display_color::black);
-            if (selected == index) {
-                surface.draw_rect(
-                    rect.left + 3,
-                    rect.top + 3,
-                    rect.width - 6,
-                    rect.height - 6,
-                    display_color::black);
-            }
-        }
+        draw_control_surface(
+            surface, visual, false, is_pressed, true, true,
+            paper_ui::radius_control);
         surface.set_text_color(
             is_pressed ? display_color::white : display_color::black,
             is_pressed ? display_color::black : display_color::white);
         surface.draw_text(
             front_light_labels[index],
-            rect.left + rect.width / 2,
-            rect.top + rect.height / 2);
+            visual.left + visual.width / 2,
+            visual.top + visual.height / 2 - 4);
+        if (selected == index) {
+            const display_color marker = is_pressed ? display_color::white
+                                                     : display_color::black;
+            surface.fill_round_rect(
+                {static_cast<std::int16_t>(
+                     visual.left + visual.width / 2 - paper_ui::space_xs),
+                 static_cast<std::int16_t>(
+                     visual.top + visual.height - paper_ui::space_md),
+                 8,
+                 8},
+                paper_ui::radius_small,
+                marker);
+        }
     }
 }
 

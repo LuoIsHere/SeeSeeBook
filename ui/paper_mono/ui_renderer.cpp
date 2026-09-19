@@ -478,7 +478,7 @@ bool draw_focus_item(
             if (index >= request.payload.books.item_count) { return false; }
             paper_mono_views::draw_books_item(
                 canvas(), request.payload.books, index, false);
-            rect = books_item_rect(index);
+            rect = books_item_redraw_rect(index);
             return true;
         case ui_view_id::menu:
             if (index >= request.payload.menu.entry_count) { return false; }
@@ -652,7 +652,7 @@ display_rect draw_control(
                 case ui_control_type::books_settings:
                     return books_settings_rect();
                 case ui_control_type::books_select_item:
-                    return books_item_rect(request.index);
+                    return books_item_redraw_rect(request.index);
                 case ui_control_type::books_page_previous:
                     return books_previous_page_rect();
                 case ui_control_type::books_page_next:

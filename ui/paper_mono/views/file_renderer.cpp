@@ -3,6 +3,7 @@
 #include <cstdio>
 #include <cstring>
 
+#include "design.hpp"
 #include "layout.hpp"
 #include "renderer_helpers.hpp"
 #include "text_layout_internal.hpp"
@@ -53,23 +54,28 @@ void draw_file_row(
     }
     const display_rect rect = file_row_rect(index);
     const file_row_view_state& row = state.rows[index];
-    const bool active_pressed =
-        (pressed || state.selected_index == index) && row.enabled;
-    const display_color background =
-        active_pressed ? display_color::black : display_color::white;
-    const display_color foreground =
-        active_pressed ? display_color::white : display_color::black;
-    draw_action_background(surface, rect, active_pressed, row.enabled);
+    const bool focused = state.selected_index == index && row.enabled;
+    const bool active_pressed = pressed && row.enabled;
+    const display_color background = control_background(active_pressed, row.enabled);
+    const display_color foreground = control_foreground(active_pressed, row.enabled);
+    draw_control_surface(
+        surface, rect, focused, pressed, row.enabled, false,
+        paper_ui::radius_control);
     surface.set_font(display_font::cjk_24);
     surface.set_text_size(FILE_ROW_TEXT_SIZE);
     surface.set_text_alignment(display_text_alignment::middle_left);
     surface.set_text_color(foreground, background);
     paper_mono_draw_cjk_text(surface, row.name, std::strlen(row.name),
-                             rect.left + 4, rect.top + rect.height / 2);
+                             rect.left + paper_ui::space_md,
+                             rect.top + rect.height / 2);
     if (row.directory) {
-        surface.set_font(display_font::cjk_24);
-        surface.set_text_alignment(display_text_alignment::middle_right);
-        surface.draw_text(">", rect.left + rect.width - 4, rect.top + rect.height / 2);
+        draw_chevron(
+            surface,
+            static_cast<std::int16_t>(
+                rect.left + rect.width - paper_ui::space_lg),
+            static_cast<std::int16_t>(rect.top + rect.height / 2),
+            true,
+            foreground);
     }
     surface.set_font(display_font::default_font);
 }
@@ -87,17 +93,16 @@ void draw_file_page_button(
         active_pressed ? display_color::black : display_color::white;
     const display_color foreground =
         active_pressed ? display_color::white : display_color::black;
-    draw_action_background(surface, rect, active_pressed, enabled);
-    if (!enabled) {
-        return;
-    }
+    draw_control_surface(
+        surface, rect, false, pressed, enabled, true,
+        paper_ui::radius_control);
     surface.set_text_color(foreground, background);
-    surface.set_text_alignment(display_text_alignment::middle_center);
-    surface.set_text_size(FILE_PAGE_BUTTON_TEXT_SIZE);
-    surface.draw_text(
-        next ? ">" : "<",
-        rect.left + rect.width / 2,
-        rect.top + rect.height / 2);
+    draw_chevron(
+        surface,
+        static_cast<std::int16_t>(rect.left + rect.width / 2),
+        static_cast<std::int16_t>(rect.top + rect.height / 2),
+        next,
+        foreground);
 }
 
 void draw_file_content(
@@ -115,11 +120,6 @@ void draw_file_content(
     surface.set_text_color(display_color::black, display_color::white);
     surface.set_text_alignment(display_text_alignment::middle_left);
     surface.draw_text(state.path, FILE_PATH_LEFT, FILE_PATH_TOP + FILE_PATH_HEIGHT / 2);
-    surface.draw_horizontal_line(
-        FILE_PATH_LEFT,
-        FILE_PATH_TOP + FILE_PATH_HEIGHT,
-        UI_DISPLAY_WIDTH - FILE_PATH_LEFT * 2,
-        display_color::black);
     surface.set_font(display_font::default_font);
     if (state.status == file_view_status::ready) {
         for (std::uint8_t index = 0U; index < state.row_count; ++index) {
@@ -146,18 +146,16 @@ void draw_file_content(
         draw_centered_line(surface, file_status_text(state.status), 360, 2U);
     }
     if (state.popup_visible) {
-        surface.fill_rect(
+        const display_rect popup = {
             FILE_POPUP_LEFT,
             FILE_POPUP_TOP,
             FILE_POPUP_WIDTH,
             FILE_POPUP_HEIGHT,
-            display_color::white);
-        surface.draw_rect(
-            FILE_POPUP_LEFT,
-            FILE_POPUP_TOP,
-            FILE_POPUP_WIDTH,
-            FILE_POPUP_HEIGHT,
-            display_color::black);
+        };
+        surface.fill_round_rect(
+            popup, paper_ui::radius_dialog, display_color::white);
+        surface.draw_round_rect(
+            popup, paper_ui::radius_dialog, display_color::black);
         surface.set_text_color(display_color::black, display_color::white);
         draw_centered_line(
             surface,

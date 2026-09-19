@@ -30,12 +30,7 @@ void draw_menu(display_surface& surface)
 {
     const auto rect = reader_menu_rect();
     surface.fill_rect(rect, display_color::white);
-    surface.draw_horizontal_line(rect.left, rect.top + rect.height - 1,
-                                 rect.width, display_color::black);
-    const auto back = reader_menu_item_rect(0U);
-    surface.set_text_alignment(display_text_alignment::middle_left);
-    surface.set_text_size(APP_BACK_BUTTON_TEXT_SIZE);
-    surface.draw_text("<", back.left + READER_MARGIN, back.top + back.height / 2);
+    draw_back_button(surface, ui_view_id::reader, false);
 }
 
 }  // namespace

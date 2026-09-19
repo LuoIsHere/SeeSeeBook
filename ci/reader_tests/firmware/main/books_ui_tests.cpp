@@ -62,16 +62,32 @@ void test_pagination_and_layout()
     CHECK_BOOKS(books_clamp_page(0U, 2U) == 0U);
     CHECK_BOOKS(BOOKS_COVER_WIDTH * 3 == BOOKS_COVER_HEIGHT * 2);
     for (std::uint8_t index = 0U; index < books_view_item_capacity; ++index) {
-        const display_rect cell = books_item_rect(index);
+        const display_rect slot = books_item_slot_rect(index);
+        const display_rect card = books_item_card_rect(index);
+        const display_rect hit = books_item_hit_rect(index);
+        const display_rect redraw = books_item_redraw_rect(index);
         const display_rect cover = books_cover_rect(index);
         const display_rect name = books_file_name_rect(index);
-        CHECK_BOOKS(cell.left >= 0 && cell.top >= BOOKS_TOOLBAR_HEIGHT);
-        CHECK_BOOKS(cell.left + cell.width <= UI_DISPLAY_WIDTH);
-        CHECK_BOOKS(cell.top + cell.height <= BOOKS_PAGER_TOP);
-        CHECK_BOOKS(cover.left >= cell.left && cover.top >= cell.top);
-        CHECK_BOOKS(cover.left + cover.width <= cell.left + cell.width);
-        CHECK_BOOKS(name.top + name.height <= cell.top + cell.height);
+        CHECK_BOOKS(slot.left >= 0 && slot.top >= BOOKS_TOOLBAR_HEIGHT);
+        CHECK_BOOKS(slot.left + slot.width <= UI_DISPLAY_WIDTH);
+        CHECK_BOOKS(slot.top + slot.height <= BOOKS_PAGER_TOP);
+        CHECK_BOOKS(card.height == BOOKS_CARD_HEIGHT);
+        CHECK_BOOKS(slot.height == BOOKS_CARD_HEIGHT + BOOKS_GRID_ROW_GAP);
+        CHECK_BOOKS(redraw.left == card.left && redraw.top == card.top &&
+                    redraw.width == card.width && redraw.height == card.height);
+        CHECK_BOOKS(hit.left <= card.left && hit.top <= card.top);
+        CHECK_BOOKS(hit.left + hit.width >= card.left + card.width);
+        CHECK_BOOKS(hit.top + hit.height >= card.top + card.height);
+        CHECK_BOOKS(cover.left >= card.left && cover.top >= card.top);
+        CHECK_BOOKS(cover.left + cover.width <= card.left + card.width);
+        CHECK_BOOKS(cover.top - card.top == BOOKS_CARD_TOP_PADDING);
+        CHECK_BOOKS(name.top == cover.top + cover.height + BOOKS_FILE_NAME_TOP_GAP);
+        CHECK_BOOKS(card.top + card.height - (name.top + name.height) ==
+                    BOOKS_CARD_BOTTOM_PADDING);
     }
+    CHECK_BOOKS(
+        books_item_hit_rect(0U).top + books_item_hit_rect(0U).height <
+        books_item_hit_rect(3U).top);
     CHECK_BOOKS(books_content_rect().top == BOOKS_TOOLBAR_HEIGHT);
     CHECK_BOOKS(books_content_rect().top + books_content_rect().height == STATUS_BAR_TOP);
     CHECK_BOOKS(books_previous_page_rect().top + books_previous_page_rect().height == STATUS_BAR_TOP);

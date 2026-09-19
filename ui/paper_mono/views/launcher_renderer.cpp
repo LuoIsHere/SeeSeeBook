@@ -2,6 +2,7 @@
 
 #include <algorithm>
 
+#include "design.hpp"
 #include "layout.hpp"
 #include "project_info.hpp"
 #include "renderer_helpers.hpp"
@@ -18,13 +19,12 @@ void draw_launcher_entry(
         return;
     }
     const display_rect rect = launcher_entry_rect(index);
-    const bool active = pressed || state.selected_index == index;
-    const display_color background =
-        active ? display_color::black : display_color::white;
-    const display_color foreground =
-        active ? display_color::white : display_color::black;
-    surface.fill_rect(rect, background);
-    surface.draw_rect(rect, foreground);
+    const bool focused = state.selected_index == index;
+    const display_color background = control_background(pressed);
+    const display_color foreground = control_foreground(pressed);
+    draw_control_surface(
+        surface, rect, focused, pressed, true, false,
+        paper_ui::radius_control);
     surface.set_text_color(foreground, background);
     surface.set_text_alignment(display_text_alignment::middle_center);
     surface.set_text_size(LAUNCHER_ENTRY_TEXT_SIZE);

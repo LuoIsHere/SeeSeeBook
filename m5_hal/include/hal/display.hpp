@@ -72,6 +72,14 @@ public:
         std::int16_t width,
         std::int16_t height,
         display_color color);
+    void fill_round_rect(
+        const display_rect& rect,
+        std::int16_t radius,
+        display_color color);
+    void draw_round_rect(
+        const display_rect& rect,
+        std::int16_t radius,
+        display_color color);
     void draw_horizontal_line(
         std::int16_t x,
         std::int16_t y,

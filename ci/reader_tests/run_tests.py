@@ -7,17 +7,23 @@ and log files stay under ``ci/reader_tests`` and are ignored by Git.
 from __future__ import annotations
 
 import argparse
+import binascii
 import json
 import os
 from pathlib import Path
 import shutil
+import struct
 import subprocess
 import sys
 import time
+import zlib
 
 
 HERE = Path(__file__).resolve().parent
 PROJECT = HERE / "firmware"
+PREVIEW_WIDTH = 480
+PREVIEW_HEIGHT = 800
+PREVIEW_ROW_BYTES = PREVIEW_WIDTH // 8
 
 
 def idf_python() -> Path:
@@ -138,6 +144,68 @@ def run_qemu(flash: Path, timeout_seconds: float) -> None:
             process.wait(timeout=10)
 
 
+def png_chunk(kind: bytes, payload: bytes) -> bytes:
+    return (
+        struct.pack(">I", len(payload))
+        + kind
+        + payload
+        + struct.pack(">I", binascii.crc32(kind + payload) & 0xFFFFFFFF)
+    )
+
+
+def write_preview_png(path: Path, packed: bytes) -> None:
+    expected = PREVIEW_ROW_BYTES * PREVIEW_HEIGHT
+    if len(packed) != expected:
+        raise RuntimeError(
+            f"preview {path.stem} has {len(packed)} bytes; expected {expected}"
+        )
+    rows = bytearray()
+    for y in range(PREVIEW_HEIGHT):
+        rows.append(0)
+        source = packed[y * PREVIEW_ROW_BYTES : (y + 1) * PREVIEW_ROW_BYTES]
+        for x in range(PREVIEW_WIDTH):
+            rows.append(0 if source[x // 8] & (1 << (x % 8)) else 255)
+    header = struct.pack(">IIBBBBB", PREVIEW_WIDTH, PREVIEW_HEIGHT, 8, 0, 0, 0, 0)
+    path.write_bytes(
+        b"\x89PNG\r\n\x1a\n"
+        + png_chunk(b"IHDR", header)
+        + png_chunk(b"IDAT", zlib.compress(bytes(rows), level=9))
+        + png_chunk(b"IEND", b"")
+    )
+
+
+def extract_previews() -> list[Path]:
+    log_path = HERE / "qemu.log"
+    lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()
+    previews: dict[str, list[str]] = {}
+    current: str | None = None
+    for line in lines:
+        if line.startswith("UI_PREVIEW_BEGIN "):
+            current = line.removeprefix("UI_PREVIEW_BEGIN ").strip()
+            previews[current] = []
+        elif line.startswith("UI_PREVIEW_END "):
+            name = line.removeprefix("UI_PREVIEW_END ").strip()
+            if current != name:
+                raise RuntimeError(f"preview marker mismatch: {current!r} != {name!r}")
+            current = None
+        elif current is not None:
+            previews[current].append(line.strip())
+    if current is not None:
+        raise RuntimeError(f"preview {current!r} did not have an end marker")
+    output = HERE.parents[1] / "inDocs" / "previews" / "v0.3-ui"
+    output.mkdir(parents=True, exist_ok=True)
+    paths: list[Path] = []
+    for name, rows in previews.items():
+        if len(rows) != PREVIEW_HEIGHT or any(
+            len(row) != PREVIEW_ROW_BYTES * 2 for row in rows
+        ):
+            raise RuntimeError(f"preview {name!r} has invalid row geometry")
+        path = output / f"{name}.png"
+        write_preview_png(path, bytes.fromhex("".join(rows)))
+        paths.append(path)
+    return paths
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--build", action="store_true", help="build the test firmware first")
@@ -148,6 +216,8 @@ def main() -> None:
     if args.build:
         build_firmware()
     run_qemu(create_flash_image(), args.timeout)
+    for preview in extract_previews():
+        print(f"PREVIEW {preview}")
 
 
 if __name__ == "__main__":

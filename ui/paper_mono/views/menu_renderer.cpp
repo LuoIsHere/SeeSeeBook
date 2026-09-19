@@ -2,6 +2,7 @@
 
 #include <algorithm>
 
+#include "design.hpp"
 #include "layout.hpp"
 #include "project_info.hpp"
 #include "renderer_helpers.hpp"
@@ -18,30 +19,18 @@ void draw_menu_entry(
         return;
     }
     const display_rect rect = menu_entry_rect(index);
-    const bool active = pressed || state.selected_index == index;
-    const display_color background =
-        active ? display_color::black : display_color::white;
-    const display_color foreground =
-        active ? display_color::white : display_color::black;
-    surface.fill_rect(rect, background);
-    if (index == 0U) {
-        surface.draw_horizontal_line(
-            rect.left,
-            rect.top,
-            rect.width,
-            display_color::black);
-    }
-    surface.draw_horizontal_line(
-        rect.left,
-        rect.top + rect.height - 1,
-        rect.width,
-        display_color::black);
+    const bool focused = state.selected_index == index;
+    const display_color background = control_background(pressed);
+    const display_color foreground = control_foreground(pressed);
+    draw_control_surface(
+        surface, rect, focused, pressed, true, false,
+        paper_ui::radius_control);
     surface.set_text_color(foreground, background);
-    surface.set_text_alignment(display_text_alignment::middle_center);
+    surface.set_text_alignment(display_text_alignment::middle_left);
     surface.set_text_size(MENU_ENTRY_TEXT_SIZE);
     surface.draw_text(
         state.entries[index].label,
-        rect.left + rect.width / 2,
+        rect.left + paper_ui::space_lg,
         rect.top + rect.height / 2);
 }
 

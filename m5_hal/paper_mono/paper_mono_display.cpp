@@ -1,5 +1,6 @@
 #include "display.hpp"
 
+#include <algorithm>
 #include <atomic>
 
 #include <M5Unified.h>
@@ -306,6 +307,50 @@ void display_surface::draw_rect(std::int16_t x, std::int16_t y,
                                 display_color color)
 {
     frame_canvas.drawRect(x, y, width_value, height_value, native_color(color));
+}
+
+void display_surface::fill_round_rect(
+    const display_rect& rect,
+    std::int16_t radius,
+    display_color color)
+{
+    if (rect.width <= 0 || rect.height <= 0) {
+        return;
+    }
+    const std::int16_t clamped_radius = std::max<std::int16_t>(
+        0,
+        std::min<std::int16_t>(
+            radius,
+            std::min<std::int16_t>(rect.width / 2, rect.height / 2)));
+    frame_canvas.fillRoundRect(
+        rect.left,
+        rect.top,
+        rect.width,
+        rect.height,
+        clamped_radius,
+        native_color(color));
+}
+
+void display_surface::draw_round_rect(
+    const display_rect& rect,
+    std::int16_t radius,
+    display_color color)
+{
+    if (rect.width <= 0 || rect.height <= 0) {
+        return;
+    }
+    const std::int16_t clamped_radius = std::max<std::int16_t>(
+        0,
+        std::min<std::int16_t>(
+            radius,
+            std::min<std::int16_t>(rect.width / 2, rect.height / 2)));
+    frame_canvas.drawRoundRect(
+        rect.left,
+        rect.top,
+        rect.width,
+        rect.height,
+        clamped_radius,
+        native_color(color));
 }
 
 void display_surface::draw_horizontal_line(std::int16_t x, std::int16_t y,

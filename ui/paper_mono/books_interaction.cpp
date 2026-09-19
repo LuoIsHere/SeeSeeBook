@@ -44,7 +44,7 @@ bool books_hit_test(
                                    : books_view_item_capacity;
     for (std::uint8_t item = 0U; item < count; ++item) {
         if (state.items[item].occupied && state.items[item].enabled &&
-            point_in_rect(x, y, books_item_rect(item))) {
+            point_in_rect(x, y, books_item_hit_rect(item))) {
             control = ui_control_type::books_select_item;
             index = item;
             return true;
@@ -76,7 +76,7 @@ bool books_control_contains(
             return point_in_rect(x, y, books_settings_rect());
         case ui_control_type::books_select_item:
             return index < books_view_item_capacity &&
-                   point_in_rect(x, y, books_item_rect(index));
+                   point_in_rect(x, y, books_item_hit_rect(index));
         case ui_control_type::books_page_previous:
             return point_in_rect(x, y, books_previous_page_rect());
         case ui_control_type::books_page_next:
